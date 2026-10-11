@@ -93,3 +93,35 @@ func (s *Store) Join(ctx context.Context, event, user string) (Status, error) {
 func (s *Store) Status(ctx context.Context, event, user string) (Status, error) {
 	return s.status(ctx, event, "status", user)
 }
+
+func (s *Store) Tick(ctx context.Context, event string) ([]string, error) {
+	raw, err := s.run(ctx, event, "tick", "")
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	err = json.Unmarshal([]byte(raw), &ids)
+	return ids, err
+}
+func (s *Store) Leave(ctx context.Context, event, user string) error {
+	_, err := s.run(ctx, event, "leave", user)
+	return err
+}
+
+// RunWorker deliberately needs no distributed lock. Each Tick is atomic in Redis.
+func (s *Store) RunWorker(ctx context.Context, events []string, interval time.Duration, onError func(error)) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		for _, event := range events {
+			if _, err := s.Tick(ctx, event); err != nil && ctx.Err() == nil && onError != nil {
+				onError(err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
