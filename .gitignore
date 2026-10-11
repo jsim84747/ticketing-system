@@ -1,0 +1,7 @@
+.tools/
+.env
+bin/
+*.log
+*.rdb
+.DS_Store
+coverage.out

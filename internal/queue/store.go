@@ -1,0 +1,95 @@
+package queue
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+// Clock is optional: production uses Redis TIME inside the atomic script.
+// Tests inject it to advance leases without sleeping.
+type Clock interface{ Now() time.Time }
+type Config struct {
+	ActiveLimit      int
+	HeartbeatTimeout time.Duration
+	MaxStay          time.Duration
+}
+
+func DefaultConfig() Config { return Config{1000, 30 * time.Second, 10 * time.Minute} }
+func (c Config) Validate() error {
+	if c.ActiveLimit < 1 || c.ActiveLimit > 100000 || c.HeartbeatTimeout < time.Millisecond || c.MaxStay < c.HeartbeatTimeout {
+		return fmt.Errorf("invalid queue config")
+	}
+	return nil
+}
+
+type Status struct {
+	Status               string `json:"status"`
+	Position             int64  `json:"position"`
+	Ahead                int64  `json:"ahead"`
+	Ticket               int64  `json:"ticket,omitempty,string"`
+	EstimatedWaitSeconds *int64 `json:"estimated_wait_seconds"`
+	Generation           string `json:"generation,omitempty"`
+	ExpiresAt            int64  `json:"expires_at,omitempty"`
+	Token                string `json:"token,omitempty"`
+}
+type Store struct {
+	Client *redis.Client
+	Config Config
+	Clock  Clock
+}
+
+//go:embed queue.lua
+var scriptSource string
+var script = redis.NewScript(scriptSource)
+var eventPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+func New(client *redis.Client, c Config, clock Clock) (*Store, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return &Store{client, c, clock}, nil
+}
+func (s *Store) keys(event string) []string {
+	p := "vwr:{" + event + "}:"
+	names := []string{"waiting", "active", "started", "generation", "sequence", "joined", "metrics", "config", "reservations", "stock"}
+	for i := range names {
+		names[i] = p + names[i]
+	}
+	return names
+}
+func (s *Store) run(ctx context.Context, event, action, user string, extra ...any) (string, error) {
+	if !eventPattern.MatchString(event) {
+		return "", fmt.Errorf("invalid event")
+	}
+	if len(user) > 128 {
+		return "", fmt.Errorf("invalid user")
+	}
+	now := int64(0)
+	if s.Clock != nil {
+		now = s.Clock.Now().UnixMilli()
+	}
+	args := []any{action, user, now, s.Config.ActiveLimit, s.Config.HeartbeatTimeout.Milliseconds(), s.Config.MaxStay.Milliseconds()}
+	args = append(args, extra...)
+	return script.Run(ctx, s.Client, s.keys(event), args...).Text()
+}
+func (s *Store) status(ctx context.Context, event, action, user string) (Status, error) {
+	raw, err := s.run(ctx, event, action, user)
+	if err != nil {
+		return Status{}, err
+	}
+	var v Status
+	err = json.Unmarshal([]byte(raw), &v)
+	return v, err
+}
+func (s *Store) Join(ctx context.Context, event, user string) (Status, error) {
+	return s.status(ctx, event, "join", user)
+}
+func (s *Store) Status(ctx context.Context, event, user string) (Status, error) {
+	return s.status(ctx, event, "status", user)
+}
