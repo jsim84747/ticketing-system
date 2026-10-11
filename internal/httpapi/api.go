@@ -33,5 +33,31 @@ func Handler(q *queue.Store) http.Handler {
 	}
 	m.HandleFunc("POST /events/{id}/queue", handle(true))
 	m.HandleFunc("GET /events/{id}/queue/status", handle(false))
+	m.HandleFunc("POST /events/{id}/queue/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		user := r.Header.Get("X-User-ID")
+		if user == "" {
+			http.Error(w, "user required", 401)
+			return
+		}
+		v, err := q.Heartbeat(r.Context(), r.PathValue("id"), user)
+		if err != nil {
+			http.Error(w, "queue unavailable", 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(v)
+	})
+	m.HandleFunc("POST /events/{id}/queue/leave", func(w http.ResponseWriter, r *http.Request) {
+		user := r.Header.Get("X-User-ID")
+		if user == "" {
+			http.Error(w, "user required", 401)
+			return
+		}
+		if err := q.Leave(r.Context(), r.PathValue("id"), user); err != nil {
+			http.Error(w, "queue unavailable", 503)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	return m
 }

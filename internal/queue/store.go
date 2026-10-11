@@ -125,3 +125,7 @@ func (s *Store) RunWorker(ctx context.Context, events []string, interval time.Du
 		}
 	}
 }
+
+func (s *Store) Heartbeat(ctx context.Context, event, user string) (Status, error) {
+	return s.status(ctx, event, "heartbeat", user)
+}

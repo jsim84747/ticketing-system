@@ -11,11 +11,34 @@ local signature = ARGV[4] .. ':' .. ARGV[5] .. ':' .. ARGV[6]
 redis.call('HSETNX',config,'signature',signature)
 if redis.call('HGET',config,'signature') ~= signature then return redis.error_reply('CONFIG_MISMATCH') end
 local function remove(id)
+  local since = redis.call('ZSCORE',started,id)
+  if since then
+    redis.call('HINCRBY',metrics,'departures',1)
+    redis.call('HINCRBY',metrics,'residence_total_ms',math.max(0,now-tonumber(since)))
+  end
   redis.call('ZREM',active,id)
   redis.call('ZREM',started,id)
   redis.call('HDEL',generation,id)
 end
+local function expired(id)
+  local beat = redis.call('ZSCORE',active,id)
+  local since = redis.call('ZSCORE',started,id)
+  return beat and (tonumber(beat) <= now-timeout or not since or tonumber(since) <= now-maxstay)
+end
+local wasExpired = false
+if user ~= '' and expired(user) then
+  remove(user)
+  wasExpired = true
+end
+if action == 'heartbeat' and redis.call('ZSCORE',active,user) then
+  redis.call('ZADD',active,now,user)
+end
 if action == 'tick' then
+  -- Two indexes avoid scanning all admissions for either expiry condition.
+  local stale = redis.call('ZRANGEBYSCORE',active,'-inf',now-timeout,'LIMIT',0,1000)
+  local overstay = redis.call('ZRANGEBYSCORE',started,'-inf',now-maxstay,'LIMIT',0,1000)
+  for _,id in ipairs(stale) do remove(id) end
+  for _,id in ipairs(overstay) do remove(id) end
   local room = math.max(0,limit-redis.call('ZCARD',active))
   local rows = {}
   if room > 0 then rows = redis.call('ZRANGE',waiting,0,math.min(room,1000)-1,'WITHSCORES') end
@@ -57,10 +80,16 @@ local function status()
   end
   local rank = redis.call('ZRANK', waiting, user)
   if rank then
+    local eta = cjson.null
+    local departed = tonumber(redis.call('HGET',metrics,'departures') or '0')
+    if departed > 0 then
+      local dwell = tonumber(redis.call('HGET',metrics,'residence_total_ms')) / departed
+      eta = math.ceil((rank+1) * dwell / limit / 1000)
+    end
     return cjson.encode({status='waiting', position=rank+1, ahead=rank,
-      ticket=string.format('%.0f',tonumber(redis.call('ZSCORE',waiting,user))), estimated_wait_seconds=cjson.null})
+      ticket=string.format('%.0f',tonumber(redis.call('ZSCORE',waiting,user))), estimated_wait_seconds=eta})
   end
-  return cjson.encode({status='absent',position=0,ahead=0})
+  return cjson.encode({status=wasExpired and 'expired' or 'absent',position=0,ahead=0})
 end
 if action == 'join' then
   if not redis.call('ZSCORE',waiting,user) and not redis.call('ZSCORE',active,user) then
