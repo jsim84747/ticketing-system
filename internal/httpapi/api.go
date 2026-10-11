@@ -1,12 +1,19 @@
 package httpapi
 
 import (
+	"embed"
 	"encoding/json"
+	"fmt"
 	"github.com/jsim84747/ticketing-system/internal/auth"
 	"github.com/jsim84747/ticketing-system/internal/queue"
+	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 )
+
+//go:embed web/*
+var webFiles embed.FS
 
 func respond(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -22,6 +29,8 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string) http.Handler 
 		allowed[e] = true
 	}
 	m := http.NewServeMux()
+	static, _ := fs.Sub(webFiles, "web")
+	m.Handle("GET /", http.FileServer(http.FS(static)))
 	m.HandleFunc("POST /session", func(w http.ResponseWriter, r *http.Request) {
 		id, token, err := signer.Session()
 		if err != nil {
@@ -78,6 +87,43 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string) http.Handler 
 	m.HandleFunc("POST /events/{id}/queue", status("join"))
 	m.HandleFunc("GET /events/{id}/queue/status", status("status"))
 	m.HandleFunc("POST /events/{id}/queue/heartbeat", status("heartbeat"))
+	m.HandleFunc("GET /events/{id}/queue/stream", protect(func(w http.ResponseWriter, r *http.Request, event, user string) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Accel-Buffering", "no")
+		controller := http.NewResponseController(w)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			if _, err := signer.Verify(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), "session"); err != nil {
+				return
+			}
+			v, err := q.Status(r.Context(), event, user)
+			if err != nil {
+				return
+			}
+			if v.Status == "admitted" {
+				v.Token = signer.Sign(auth.Claims{Purpose: "admission", User: user, Event: event, Generation: v.Generation, Expires: v.ExpiresAt})
+			}
+			v.Generation = ""
+			payload, err := json.Marshal(v)
+			if err != nil {
+				return
+			}
+			// Renew per-frame deadlines so server WriteTimeout does not cut healthy streams.
+			_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if _, err := fmt.Fprintf(w, "event: status\ndata: %s\n\n", payload); err != nil {
+				return
+			}
+			if err := controller.Flush(); err != nil {
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}))
 	m.HandleFunc("POST /events/{id}/queue/leave", protect(func(w http.ResponseWriter, r *http.Request, event, user string) {
 		if err := q.Leave(r.Context(), event, user); err != nil {
 			problem(w, 503, "queue unavailable")
@@ -114,6 +160,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string) http.Handler 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 		m.ServeHTTP(w, r)
 	})
 }

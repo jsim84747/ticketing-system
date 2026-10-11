@@ -137,3 +137,56 @@ func TestReservationSecurityAndInventory(t *testing.T) {
 	assertCode(call("POST", base+"/reserve", loser, lt), 403)
 	assertCode(call("POST", base+"/queue/heartbeat", loser, ""), 200)
 }
+
+// Cancel at first flushed frame: no sleeps and no access to a live recorder.
+type cancelRecorder struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+}
+
+func (w *cancelRecorder) Flush() { w.ResponseRecorder.Flush(); w.cancel() }
+func TestSSEAndStatic(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:16379"
+	}
+	r := redis.NewClient(&redis.Options{Addr: addr})
+	defer r.Close()
+	event := fmt.Sprintf("stream-%d", time.Now().UnixNano())
+	q, _ := queue.New(r, queue.DefaultConfig(), nil)
+	ctx := context.Background()
+	if err := q.InitEvent(ctx, event, 1); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		keys, _ := r.Keys(ctx, "vwr:{"+event+"}:*").Result()
+		if len(keys) > 0 {
+			r.Del(ctx, keys...)
+		}
+	}()
+	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), nil)
+	user, session, _ := signer.Session()
+	h := Handler(q, signer, []string{event})
+	if _, err := q.Join(ctx, event, user); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Tick(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req := httptest.NewRequest("GET", "/events/"+event+"/queue/stream", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+session)
+	w := &cancelRecorder{httptest.NewRecorder(), cancel}
+	h.ServeHTTP(w, req)
+	if w.Code != 200 || w.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(w.Body.String(), `"status":"admitted"`) || !strings.Contains(w.Body.String(), `"token":`) {
+		t.Fatalf("stream: %d %s", w.Code, w.Body.String())
+	}
+	for _, path := range []string{"/", "/app.js", "/style.css"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 {
+			t.Fatalf("static %s: %d", path, w.Code)
+		}
+	}
+}
