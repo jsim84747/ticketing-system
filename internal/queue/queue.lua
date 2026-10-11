@@ -72,7 +72,29 @@ if action == 'leave' then
   redis.call('ZREM',waiting,user)
   redis.call('HDEL',joined,user)
 end
+if action == 'reserve' then
+  local previous = redis.call('HGET',reservations,user)
+  if previous then
+    local old = cjson.decode(previous)
+    if old.generation == ARGV[7] then return previous end
+    return redis.error_reply('ALREADY_RESERVED')
+  end
+  if not redis.call('ZSCORE',active,user) or redis.call('HGET',generation,user) ~= ARGV[7] then
+    return redis.error_reply('NOT_ADMITTED')
+  end
+  local remaining = tonumber(redis.call('GET',stock) or '0')
+  if remaining <= 0 then return redis.error_reply('SOLD_OUT') end
+  local result = cjson.encode({reservation_id=ARGV[8],generation=ARGV[7]})
+  redis.call('DECR',stock)
+  redis.call('HSET',reservations,user,result)
+  remove(user)
+  return result
+end
 local function status()
+  local reservation = redis.call('HGET',reservations,user)
+  if reservation then
+    return cjson.encode({status='completed',position=0,ahead=0,reservation_id=cjson.decode(reservation).reservation_id})
+  end
   if redis.call('ZSCORE',active,user) then
     return cjson.encode({status='admitted',position=0,ahead=0,
       generation=redis.call('HGET',generation,user),
@@ -92,7 +114,7 @@ local function status()
   return cjson.encode({status=wasExpired and 'expired' or 'absent',position=0,ahead=0})
 end
 if action == 'join' then
-  if not redis.call('ZSCORE',waiting,user) and not redis.call('ZSCORE',active,user) then
+  if not redis.call('HGET',reservations,user) and not redis.call('ZSCORE',waiting,user) and not redis.call('ZSCORE',active,user) then
     -- Logical microsecond score: INCR also orders ties and clock regressions.
     local s = math.max(redis.call('INCR',sequence), now * 1000)
     redis.call('SET',sequence,string.format('%.0f',s))

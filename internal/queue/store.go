@@ -29,6 +29,7 @@ func (c Config) Validate() error {
 }
 
 type Status struct {
+	ReservationID        string `json:"reservation_id,omitempty"`
 	Status               string `json:"status"`
 	Position             int64  `json:"position"`
 	Ahead                int64  `json:"ahead"`
@@ -128,4 +129,28 @@ func (s *Store) RunWorker(ctx context.Context, events []string, interval time.Du
 
 func (s *Store) Heartbeat(ctx context.Context, event, user string) (Status, error) {
 	return s.status(ctx, event, "heartbeat", user)
+}
+
+type Reservation struct {
+	ID         string `json:"reservation_id"`
+	Generation string `json:"generation"`
+}
+
+func (s *Store) InitEvent(ctx context.Context, event string, tickets int) error {
+	if tickets < 0 {
+		return fmt.Errorf("invalid inventory")
+	}
+	if _, err := s.run(ctx, event, "status", ""); err != nil {
+		return err
+	}
+	return s.Client.SetNX(ctx, s.keys(event)[9], tickets, 0).Err()
+}
+func (s *Store) Reserve(ctx context.Context, event, user, generation, id string) (Reservation, error) {
+	raw, err := s.run(ctx, event, "reserve", user, generation, id)
+	if err != nil {
+		return Reservation{}, err
+	}
+	var v Reservation
+	err = json.Unmarshal([]byte(raw), &v)
+	return v, err
 }
