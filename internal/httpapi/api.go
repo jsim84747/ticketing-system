@@ -148,7 +148,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			problem(w, 400, "first name, last name and email are required")
 			return
 		}
-		if _, err := who.Normalize(); err != nil {
+		if _, err := who.NormalizeAdmin(); err != nil {
 			problem(w, 400, err.Error())
 			return
 		}
@@ -162,6 +162,18 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			return
 		}
 		respond(w, 200, v)
+	}))
+	m.HandleFunc("DELETE /admin/api/events/{id}/reservations/{user}", admin(func(w http.ResponseWriter, r *http.Request) {
+		err := q.DeleteReservation(r.Context(), r.PathValue("id"), r.PathValue("user"))
+		if errors.Is(err, queue.ErrReservationNotFound) {
+			problem(w, 404, "reservation not found")
+			return
+		}
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		w.WriteHeader(204)
 	}))
 	m.HandleFunc("POST /admin/api/events/{id}/kick", admin(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

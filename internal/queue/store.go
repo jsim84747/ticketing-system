@@ -194,10 +194,26 @@ func (s *Store) Reserve(ctx context.Context, event, user, generation, id string,
 // ErrReservationNotFound means the user has no reservation for the event.
 var ErrReservationNotFound = errors.New("reservation not found")
 
+// NormalizeAdmin is the looser check for admin edits: names are still
+// required, but the email is free text so admins can record whatever
+// contact detail they have.
+func (c Customer) NormalizeAdmin() (Customer, error) {
+	c.FirstName, c.LastName, c.Email = strings.TrimSpace(c.FirstName), strings.TrimSpace(c.LastName), strings.TrimSpace(c.Email)
+	switch {
+	case c.FirstName == "" || len([]rune(c.FirstName)) > 100:
+		return c, fmt.Errorf("first name is required (up to 100 characters)")
+	case c.LastName == "" || len([]rune(c.LastName)) > 100:
+		return c, fmt.Errorf("last name is required (up to 100 characters)")
+	case len([]rune(c.Email)) > 254:
+		return c, fmt.Errorf("email must be at most 254 characters")
+	}
+	return c, nil
+}
+
 // UpdateReservation changes who a reservation is for. The ticket itself,
 // its number and time are unchanged.
 func (s *Store) UpdateReservation(ctx context.Context, event, user string, who Customer) (Reservation, error) {
-	who, err := who.Normalize()
+	who, err := who.NormalizeAdmin()
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -212,6 +228,15 @@ func (s *Store) UpdateReservation(ctx context.Context, event, user string, who C
 	err = json.Unmarshal([]byte(raw), &v)
 	v.UserID, v.Generation = user, ""
 	return v, err
+}
+
+// DeleteReservation cancels a reservation and puts its ticket back on sale.
+func (s *Store) DeleteReservation(ctx context.Context, event, user string) error {
+	_, err := s.run(ctx, event, "delete_reservation", user)
+	if err != nil && strings.Contains(err.Error(), "NOT_FOUND") {
+		return ErrReservationNotFound
+	}
+	return err
 }
 
 // Reservations returns every reservation for an event, newest first.

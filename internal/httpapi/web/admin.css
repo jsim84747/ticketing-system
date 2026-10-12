@@ -26,8 +26,9 @@
 .users td{border-top:1px solid #edf0e8;padding:10px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .users td:last-child{text-align:right;width:90px}
 #reservations td:nth-child(4){font-size:11px;color:#6a796e}
-#reservations td:last-child{width:130px;white-space:nowrap}
+#reservations td:last-child{width:150px;white-space:nowrap;text-align:right}
 #reservations td button{margin-left:6px;border:1px solid #cad7bd;color:#36553c}
+#reservations td button.danger{border-color:#e3cfc6;color:#8a4b3a}
 #reservations td button.save{background:#254c3a;border-color:#254c3a;color:#fff}
 #reservations input{font:inherit;font-size:12px;padding:7px 8px;border:1px solid #cad7bd;border-radius:7px;background:#fbfcf9;width:100%;min-width:0}
 #reservations .name-edit{display:flex;gap:6px}

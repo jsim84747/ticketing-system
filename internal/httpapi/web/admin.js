@@ -102,11 +102,18 @@ function reservationRow(r) {
   if (editing !== r.user_id) {
     row.append(cell(fullName(r)), cell(r.email || '—'), cell(when(r.reserved_at)), cell(r.reservation_id));
     const actions = document.createElement('td');
-    actions.append(button('Edit', () => { editing = r.user_id; $('res-message').textContent = ''; row.replaceWith(reservationRow(r)); }));
+    actions.append(button('Edit', () => { editing = r.user_id; $('res-message').textContent = ''; row.replaceWith(reservationRow(r)); }),
+      button('Delete', async e => {
+        if (!confirm(`Delete the reservation for ${fullName(r)}? Their ticket goes back on sale. This can't be undone.`)) return;
+        e.target.disabled = true;
+        try { await api(`/admin/api/events/${encodeURIComponent(selected())}/reservations/${encodeURIComponent(r.user_id)}`, 'DELETE'); flash('res-message', `Deleted the reservation for ${fullName(r)}.`); refresh(); }
+        catch (err) { flash('res-message', `Couldn't delete: ${err.message}`, false); e.target.disabled = false; }
+      }, 'danger'));
     row.append(actions);
     return row;
   }
-  const first = input(r.first_name, 'First name'), last = input(r.last_name, 'Last name'), email = input(r.email, 'Email', 'email');
+  const first = input(r.first_name, 'First name'), last = input(r.last_name, 'Last name'), email = input(r.email, 'Email');
+  email.required = false; // admins may record any contact detail, or none
   const names = document.createElement('td'), mail = document.createElement('td'), actions = document.createElement('td');
   const box = document.createElement('div'); box.className = 'name-edit'; box.append(first, last); names.append(box); mail.append(email);
   const save = button('Save', async () => {

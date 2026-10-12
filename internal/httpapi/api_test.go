@@ -405,15 +405,16 @@ func TestReservationDetailsAndAdminList(t *testing.T) {
 	if w := call("PUT", edit, "wrong", "", `{"first_name":"A","last_name":"B","email":"a@b.co"}`); w.Code != 401 {
 		t.Fatalf("edit without admin password: %d", w.Code)
 	}
-	if w := call("PUT", edit, "admin-secret", "", `{"first_name":"A","last_name":"B","email":"nope"}`); w.Code != 400 {
-		t.Fatalf("edit with bad email: %d", w.Code)
+	if w := call("PUT", edit, "admin-secret", "", `{"first_name":" ","last_name":"B","email":"a@b.co"}`); w.Code != 400 {
+		t.Fatalf("edit without a first name: %d", w.Code)
 	}
 	if w := call("PUT", "/admin/api/events/"+event+"/reservations/nobody", "admin-secret", "", `{"first_name":"A","last_name":"B","email":"a@b.co"}`); w.Code != 404 {
 		t.Fatalf("edit unknown reservation: %d", w.Code)
 	}
 	before := r.HGet(ctx, "vwr:{"+event+"}:reservations", user).Val()
-	w = call("PUT", edit, "admin-secret", "", `{"first_name":"Ji-won","last_name":"Shim","email":" new@example.com "}`)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"email":"new@example.com"`) || strings.Contains(w.Body.String(), `"generation"`) {
+	// Admins may save any contact detail, even one that is not an email address.
+	w = call("PUT", edit, "admin-secret", "", `{"first_name":"Ji-won","last_name":"Shim","email":" call 010-1234-5678 "}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"email":"call 010-1234-5678"`) || strings.Contains(w.Body.String(), `"generation"`) {
 		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
 	}
 	var was, now queue.Reservation
@@ -424,5 +425,22 @@ func TestReservationDetailsAndAdminList(t *testing.T) {
 	}
 	if n := r.Get(ctx, "vwr:{"+event+"}:stock").Val(); n != "4" {
 		t.Fatalf("editing must not touch inventory, stock %s", n)
+	}
+
+	// Deleting cancels the reservation and returns its ticket.
+	if w := call("DELETE", edit, "wrong", "", ""); w.Code != 401 {
+		t.Fatalf("delete without admin password: %d", w.Code)
+	}
+	if w := call("DELETE", edit, "admin-secret", "", ""); w.Code != 204 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("DELETE", edit, "admin-secret", "", ""); w.Code != 404 {
+		t.Fatalf("second delete: %d", w.Code)
+	}
+	if n := r.Get(ctx, "vwr:{"+event+"}:stock").Val(); n != "5" {
+		t.Fatalf("deleted reservation should return its ticket, stock %s", n)
+	}
+	if w := call("GET", "/admin/api/events/"+event+"/reservations", "admin-secret", "", ""); !strings.Contains(w.Body.String(), `"total":0`) {
+		t.Fatalf("reservation still listed: %s", w.Body.String())
 	}
 }

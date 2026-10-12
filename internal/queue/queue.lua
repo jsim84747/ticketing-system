@@ -146,6 +146,12 @@ if action == 'edit_reservation' then
   redis.call('HSET',reservations,user,result)
   return result
 end
+-- Admins cancel a reservation; its ticket goes back on sale.
+if action == 'delete_reservation' then
+  if redis.call('HDEL',reservations,user) == 0 then return redis.error_reply('NOT_FOUND') end
+  redis.call('INCR',stock)
+  return 'OK'
+end
 if action == 'reserve' then
   local previous = redis.call('HGET',reservations,user)
   if previous then
