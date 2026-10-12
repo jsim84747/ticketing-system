@@ -201,6 +201,9 @@ func TestManualModeAndSettings(t *testing.T) {
 	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "3" || ids[1] != "4" {
 		t.Fatalf("auto tick after raising limit: %v %v", ids, err)
 	}
+	if v, _ := s.Status(ctx, e, "5"); v.Remaining != 7 || v.InLine != 2 || v.Inside != 4 {
+		t.Fatalf("visitors should see tickets left and line size: %+v", v)
+	}
 	st, err := s.Stats(ctx, e)
 	if err != nil || st.Active != 4 || st.Waiting != 2 || st.ActiveLimit != 4 || st.Mode != "auto" || st.Name != name || st.Remaining != 7 || st.OrderViolations != 0 {
 		t.Fatalf("stats %+v %v", st, err)

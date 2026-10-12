@@ -191,6 +191,7 @@ end
 local function encode(v)
   v.name = name; v.mode = mode; v.open_at = openAt; v.badge = badge; v.join_lock = joinLock; v.now = now
   v.max_per_order = maxPerOrder; v.in_line = redis.call('ZCARD',waiting); v.inside = redis.call('ZCARD',active)
+  v.remaining = tonumber(redis.call('GET',stock) or '0')
   return cjson.encode(v)
 end
 local function status()

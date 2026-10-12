@@ -52,9 +52,16 @@ function render(v) {
   state = v.status; admission = v.token || '';
   if (v.mode) { mode = v.mode; openAt = v.open_at || 0; joinLock = !!v.join_lock; }
   if (v.now) clockOffset = v.now - Date.now();
-  if (v.max_per_order && $('quantity').options.length !== v.max_per_order) {
-    const keep = Math.min(Number($('quantity').value) || 1, v.max_per_order);
-    $('quantity').replaceChildren(...Array.from({length: v.max_per_order}, (_, i) => new Option(String(i + 1), String(i + 1))));
+  if (v.remaining != null) {
+    const left = v.remaining.toLocaleString('en-US');
+    $('left').textContent = v.remaining > 0 ? left : 'Sold out'; $('left').classList.toggle('sold-out', v.remaining <= 0);
+    $('left-line').textContent = v.remaining > 0 ? ` · ${left} ${v.remaining === 1 ? 'ticket' : 'tickets'} left` : ' · Sold out';
+  }
+  // Never offer more tickets than one order allows or than are left.
+  const most = Math.max(1, Math.min(v.max_per_order || 1, v.remaining ?? Infinity));
+  if (v.max_per_order && $('quantity').options.length !== most) {
+    const keep = Math.min(Number($('quantity').value) || 1, most);
+    $('quantity').replaceChildren(...Array.from({length: most}, (_, i) => new Option(String(i + 1), String(i + 1))));
     $('quantity').value = String(keep); updateQuantityLabel();
   }
   $('connection').textContent = 'Live';
@@ -68,7 +75,7 @@ function render(v) {
     const progress = Math.max(0, Math.min(99, (1 - v.position / initial) * 100));
     $('position').textContent = `#${v.position.toLocaleString('en-US')}`; $('unit').textContent = 'in line'; $('caption').textContent = 'Your place in line';
     $('ahead').textContent = v.ahead.toLocaleString('en-US');
-    $('eta').textContent = opensSoon() ? (openAt > serverNow() ? `Opens in ${countdown(openAt - serverNow())}` : 'Opening now') : v.mode === 'manual' ? 'Set by organizer' : v.estimated_wait_seconds == null ? 'Calculating' : v.estimated_wait_seconds < 60 ? `About ${v.estimated_wait_seconds} sec` : `About ${Math.ceil(v.estimated_wait_seconds / 60)} min`;
+    $('eta').textContent = opensSoon() ? (openAt > serverNow() ? `Opens in ${countdown(openAt - serverNow())}` : 'Opening now') : v.mode === 'manual' ? 'Set by organizer' : v.estimated_wait_seconds == null ? 'Calculating' : v.estimated_wait_seconds < 60 ? `~${v.estimated_wait_seconds} sec` : `~${Math.ceil(v.estimated_wait_seconds / 60)} min`;
     $('detail').textContent = opensSoon() ? `Doors open at ${doors()}. Stay on this page and you'll be let in in order.` : v.mode === 'manual' ? 'The organizer is letting people in. Your place is saved, even if you refresh.' : 'Your place is saved, even if you refresh.';
     $('progress').value = progress; $('progress-text').textContent = `${Math.floor(progress)}%`;
   } else if (state === 'admitted') {

@@ -50,6 +50,7 @@ type Status struct {
 	MaxPerOrder          int    `json:"max_per_order"`
 	InLine               int64  `json:"in_line"`
 	Inside               int64  `json:"inside"`
+	Remaining            int64  `json:"remaining"`
 }
 type Store struct {
 	Client *redis.Client
