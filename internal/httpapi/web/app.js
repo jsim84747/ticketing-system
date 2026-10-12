@@ -22,11 +22,16 @@ async function api(path, method = 'GET', extra = {}) {
   return data;
 }
 function countdown(ms) {
-  const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  const s = Math.max(0, Math.ceil(ms / 1000)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  if (d) return `${d}d ${h}h`;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
 }
 const opensSoon = () => mode === 'manual' && openAt > 0;
-const doors = () => new Date(openAt).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+// Shown in the visitor's own time zone, with the zone named so there is no doubt.
+const doors = () => {
+  const at = new Date(openAt), today = at.toDateString() === new Date().toDateString();
+  return at.toLocaleString('en-US', {...(today ? {} : {month: 'short', day: 'numeric'}), hour: 'numeric', minute: '2-digit', timeZoneName: 'short'});
+};
 // Ticks every second between polls so the countdown moves smoothly.
 setInterval(() => { if (state === 'waiting' && opensSoon()) $('eta').textContent = openAt > Date.now() ? `Opens in ${countdown(openAt - Date.now())}` : 'Opening now'; }, 1000);
 function render(v) {
@@ -46,7 +51,7 @@ function render(v) {
     $('detail').textContent = opensSoon() ? `Doors open at ${doors()}. Stay on this page and you'll be let in in order.` : v.mode === 'manual' ? 'The organizer is letting people in. Your place is saved, even if you refresh.' : 'Your place is saved, even if you refresh.';
     $('progress').value = progress; $('progress-text').textContent = `${Math.floor(progress)}%`;
   } else if (state === 'admitted') {
-    $('expires').textContent = new Date(v.expires_at).toLocaleTimeString('en-US');
+    $('expires').textContent = new Date(v.expires_at).toLocaleTimeString('en-US', {timeZoneName: 'short'});
     $('message').textContent = $('pause').checked ? 'Heartbeat paused. Your spot will expire in 30 seconds.' : 'Checking your connection every 10 seconds.';
   } else if (state === 'completed') {
     $('reservation').textContent = `Reservation number: ${v.reservation_id}`; $('message').textContent = '';

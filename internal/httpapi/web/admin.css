@@ -40,6 +40,7 @@
 .segmented button{border:0;background:transparent;padding:11px;border-radius:8px;font-size:13px;font-weight:650;color:#5e7063}
 .segmented button[aria-checked=true]{background:#fff;color:#18362c;box-shadow:0 1px 4px #1f382714}
 .help{font-size:12px;line-height:1.7;color:#69766e;margin:0}
+#tz-note{margin-top:-6px;font-size:11px}
 .admin-message.ok{color:#456830}
 #schedule-form{display:flex;flex-direction:column;gap:14px}
 .scheduled{display:flex;flex-direction:column;gap:6px;background:#f6f0e4;border:1px solid #ecdcc0;border-radius:12px;padding:16px}

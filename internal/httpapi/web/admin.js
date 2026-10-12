@@ -26,17 +26,22 @@ function fillSettings(e, force) {
   $('set-name').value = e.name; $('set-limit').value = e.active_limit; $('set-remaining').value = e.remaining;
 }
 const countdown = ms => {
-  const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
-  return h ? `${h}h ${m}m ${r}s` : m ? `${m}m ${r}s` : `${r}s`;
+  const s = Math.max(0, Math.ceil(ms / 1000)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m ${r}s` : m ? `${m}m ${r}s` : `${r}s`;
 };
 // datetime-local wants local time without a zone, e.g. 2026-10-12T20:00.
+// Times are entered and shown in this computer's time zone. They are stored as
+// an absolute instant, so each user sees the same moment in their own zone.
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const zoneShort = date => new Intl.DateTimeFormat('en-US', {timeZoneName: 'short'}).formatToParts(date).find(p => p.type === 'timeZoneName').value;
+$('tz-note').textContent = `Time zone: ${zone} (${zoneShort(new Date())}), from this computer's clock. Visitors see the opening time converted to their own time zone.`;
 const localInput = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 function renderSchedule(e) {
   const manual = e.mode === 'manual', scheduled = manual && e.open_at > 0;
   $('schedule').hidden = !manual; $('schedule-form').hidden = scheduled; $('scheduled').hidden = !scheduled;
   if (scheduled) {
-    $('scheduled-time').textContent = new Date(e.open_at).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'});
-    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())}. People can line up now; nobody is let in early.`;
+    $('scheduled-time').textContent = new Date(e.open_at).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'}) + ` ${zoneShort(new Date(e.open_at))}`;
+    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())} (${zone}). People can line up now; nobody is let in early.`;
   } else if (!$('open-at').value) {
     const next = new Date(Date.now() + 5 * 60000); next.setSeconds(0, 0);
     $('open-at').value = localInput(next);
