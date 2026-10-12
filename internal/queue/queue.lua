@@ -6,16 +6,24 @@ if now == 0 then
   local t = redis.call('TIME')
   now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
-local limit, timeout, maxstay = tonumber(ARGV[4]), tonumber(ARGV[5]), tonumber(ARGV[6])
-local signature = ARGV[4] .. ':' .. ARGV[5] .. ':' .. ARGV[6]
-redis.call('HSETNX',config,'signature',signature)
-if redis.call('HGET',config,'signature') ~= signature then return redis.error_reply('CONFIG_MISMATCH') end
+-- Settings live in Redis so admins can change them at runtime and every server
+-- reads the same values. ARGV only seeds the settings of a new event.
+redis.call('HSETNX',config,'limit',ARGV[4])
+redis.call('HSETNX',config,'timeout',ARGV[5])
+redis.call('HSETNX',config,'maxstay',ARGV[6])
+redis.call('HSETNX',config,'mode','auto')
+local limit = tonumber(redis.call('HGET',config,'limit'))
+local timeout = tonumber(redis.call('HGET',config,'timeout'))
+local maxstay = tonumber(redis.call('HGET',config,'maxstay'))
+local mode = redis.call('HGET',config,'mode')
+local name = redis.call('HGET',config,'name') or ''
 if action == 'stats' then
-  local function metric(name) return tonumber(redis.call('HGET',metrics,name) or '0') end
+  local function metric(key) return tonumber(redis.call('HGET',metrics,key) or '0') end
   return cjson.encode({active=redis.call('ZCARD',active),waiting=redis.call('ZCARD',waiting),
     admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
     wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms'),
-    remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations)})
+    remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations),
+    active_limit=limit,mode=mode,name=name})
 end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)
@@ -40,34 +48,47 @@ end
 if action == 'heartbeat' and redis.call('ZSCORE',active,user) then
   redis.call('ZADD',active,now,user)
 end
-if action == 'tick' then
+local function cleanup()
   -- Two indexes avoid scanning all admissions for either expiry condition.
   local stale = redis.call('ZRANGEBYSCORE',active,'-inf',now-timeout,'LIMIT',0,1000)
   local overstay = redis.call('ZRANGEBYSCORE',started,'-inf',now-maxstay,'LIMIT',0,1000)
   for _,id in ipairs(stale) do remove(id) end
   for _,id in ipairs(overstay) do remove(id) end
-  local room = math.max(0,limit-redis.call('ZCARD',active))
-  local rows = {}
-  if room > 0 then rows = redis.call('ZRANGE',waiting,0,math.min(room,1000)-1,'WITHSCORES') end
+end
+-- Admits up to max users from the front of the queue without exceeding the limit.
+local function admit(max)
+  local room = math.min(max,limit-redis.call('ZCARD',active))
   local admitted = {}
-  if room > 0 then
-    for i=1,#rows,2 do
-      local id, score = rows[i], tonumber(rows[i+1])
-      redis.call('ZREM',waiting,id)
-      redis.call('ZADD',active,now,id)
-      redis.call('ZADD',started,now,id)
-      redis.call('HSET',generation,id,string.format('%.0f',score))
-      local wait = math.max(0,now-tonumber(redis.call('HGET',joined,id)))
-      redis.call('HDEL',joined,id)
-      redis.call('HINCRBY',metrics,'admissions',1)
-      redis.call('HINCRBY',metrics,'wait_total_ms',wait)
-      local maxwait = tonumber(redis.call('HGET',metrics,'wait_max_ms') or '0')
-      redis.call('HSET',metrics,'wait_max_ms',math.max(maxwait,wait))
-      local last = tonumber(redis.call('HGET',metrics,'last_score') or '0')
-      if score <= last then redis.call('HINCRBY',metrics,'order_violations',1) end
-      redis.call('HSET',metrics,'last_score',string.format('%.0f',score))
-      table.insert(admitted,id)
-    end
+  if room <= 0 then return admitted end
+  local rows = redis.call('ZRANGE',waiting,0,room-1,'WITHSCORES')
+  for i=1,#rows,2 do
+    local id, score = rows[i], tonumber(rows[i+1])
+    redis.call('ZREM',waiting,id)
+    redis.call('ZADD',active,now,id)
+    redis.call('ZADD',started,now,id)
+    redis.call('HSET',generation,id,string.format('%.0f',score))
+    local wait = math.max(0,now-tonumber(redis.call('HGET',joined,id)))
+    redis.call('HDEL',joined,id)
+    redis.call('HINCRBY',metrics,'admissions',1)
+    redis.call('HINCRBY',metrics,'wait_total_ms',wait)
+    local maxwait = tonumber(redis.call('HGET',metrics,'wait_max_ms') or '0')
+    redis.call('HSET',metrics,'wait_max_ms',math.max(maxwait,wait))
+    local last = tonumber(redis.call('HGET',metrics,'last_score') or '0')
+    if score <= last then redis.call('HINCRBY',metrics,'order_violations',1) end
+    redis.call('HSET',metrics,'last_score',string.format('%.0f',score))
+    table.insert(admitted,id)
+  end
+  return admitted
+end
+-- tick is the worker's job: expire leases, then admit only in auto mode.
+-- admit is the admin's "let the next N in" button and works in either mode.
+if action == 'tick' or action == 'admit' then
+  cleanup()
+  local admitted = {}
+  if action == 'admit' then
+    admitted = admit(math.min(tonumber(ARGV[7]),1000))
+  elseif mode == 'auto' then
+    admitted = admit(1000)
   end
   local peak = tonumber(redis.call('HGET',metrics,'peak_active') or '0')
   redis.call('HSET',metrics,'peak_active',math.max(peak,redis.call('ZCARD',active)))
@@ -97,13 +118,14 @@ if action == 'reserve' then
   remove(user)
   return result
 end
+local function encode(v) v.name = name; v.mode = mode; return cjson.encode(v) end
 local function status()
   local reservation = redis.call('HGET',reservations,user)
   if reservation then
-    return cjson.encode({status='completed',position=0,ahead=0,reservation_id=cjson.decode(reservation).reservation_id})
+    return encode({status='completed',position=0,ahead=0,reservation_id=cjson.decode(reservation).reservation_id})
   end
   if redis.call('ZSCORE',active,user) then
-    return cjson.encode({status='admitted',position=0,ahead=0,
+    return encode({status='admitted',position=0,ahead=0,
       generation=redis.call('HGET',generation,user),
       expires_at=tonumber(redis.call('ZSCORE',started,user))+maxstay})
   end
@@ -111,14 +133,14 @@ local function status()
   if rank then
     local eta = cjson.null
     local departed = tonumber(redis.call('HGET',metrics,'departures') or '0')
-    if departed > 0 then
+    if departed > 0 and mode == 'auto' then
       local dwell = tonumber(redis.call('HGET',metrics,'residence_total_ms')) / departed
       eta = math.ceil((rank+1) * dwell / limit / 1000)
     end
-    return cjson.encode({status='waiting', position=rank+1, ahead=rank,
+    return encode({status='waiting', position=rank+1, ahead=rank,
       ticket=string.format('%.0f',tonumber(redis.call('ZSCORE',waiting,user))), estimated_wait_seconds=eta})
   end
-  return cjson.encode({status=wasExpired and 'expired' or 'absent',position=0,ahead=0})
+  return encode({status=wasExpired and 'expired' or 'absent',position=0,ahead=0})
 end
 if action == 'join' then
   if not redis.call('HGET',reservations,user) and not redis.call('ZSCORE',waiting,user) and not redis.call('ZSCORE',active,user) then

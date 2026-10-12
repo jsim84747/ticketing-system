@@ -38,6 +38,8 @@ type Status struct {
 	Generation           string `json:"generation,omitempty"`
 	ExpiresAt            int64  `json:"expires_at,omitempty"`
 	Token                string `json:"token,omitempty"`
+	Name                 string `json:"name"`
+	Mode                 string `json:"mode"`
 }
 type Store struct {
 	Client *redis.Client
@@ -155,18 +157,91 @@ func (s *Store) Reserve(ctx context.Context, event, user, generation, id string)
 	return v, err
 }
 
+// Admit lets up to n users in from the front of the queue, never exceeding the
+// active limit. It is how admins admit users in manual mode.
+func (s *Store) Admit(ctx context.Context, event string, n int) ([]string, error) {
+	if n < 1 || n > 1000 {
+		return nil, fmt.Errorf("invalid admit count")
+	}
+	raw, err := s.run(ctx, event, "admit", "", n)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	err = json.Unmarshal([]byte(raw), &ids)
+	return ids, err
+}
+
+// Settings are the per-event values an admin can change at runtime. Nil
+// fields are left unchanged.
+type Settings struct {
+	ActiveLimit *int    `json:"active_limit"`
+	Name        *string `json:"name"`
+	Remaining   *int    `json:"remaining"`
+	Mode        *string `json:"mode"`
+}
+
+func (v Settings) Validate() error {
+	switch {
+	case v.ActiveLimit != nil && (*v.ActiveLimit < 1 || *v.ActiveLimit > 100000):
+		return fmt.Errorf("max concurrent users must be between 1 and 100000")
+	case v.Name != nil && len([]rune(*v.Name)) > 80:
+		return fmt.Errorf("ticket name must be at most 80 characters")
+	case v.Remaining != nil && (*v.Remaining < 0 || *v.Remaining > 10000000):
+		return fmt.Errorf("remaining tickets must be between 0 and 10000000")
+	case v.Mode != nil && *v.Mode != "auto" && *v.Mode != "manual":
+		return fmt.Errorf(`mode must be "auto" or "manual"`)
+	}
+	return nil
+}
+
+// UpdateSettings applies the given settings in one transaction. Lowering the
+// limit never evicts anyone; admission simply pauses until occupancy drops.
+func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) error {
+	if !eventPattern.MatchString(event) {
+		return fmt.Errorf("invalid event")
+	}
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	// Seed defaults first so a partial update never leaves an event half-configured.
+	if _, err := s.run(ctx, event, "status", ""); err != nil {
+		return err
+	}
+	k := s.keys(event)
+	_, err := s.Client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		if v.ActiveLimit != nil {
+			p.HSet(ctx, k[7], "limit", *v.ActiveLimit)
+		}
+		if v.Name != nil {
+			p.HSet(ctx, k[7], "name", *v.Name)
+		}
+		if v.Mode != nil {
+			p.HSet(ctx, k[7], "mode", *v.Mode)
+		}
+		if v.Remaining != nil {
+			p.Set(ctx, k[9], *v.Remaining, 0)
+		}
+		return nil
+	})
+	return err
+}
+
 // Stats is read atomically; peak and FIFO violations are recorded at admission,
 // not sampled, so even transient breaches are observable by the load harness.
 type Stats struct {
-	Active          int64 `json:"active"`
-	Waiting         int64 `json:"waiting"`
-	Admissions      int64 `json:"admissions"`
-	PeakActive      int64 `json:"peak_active"`
-	OrderViolations int64 `json:"order_violations"`
-	WaitTotalMS     int64 `json:"wait_total_ms"`
-	WaitMaxMS       int64 `json:"wait_max_ms"`
-	Remaining       int64 `json:"remaining"`
-	Reserved        int64 `json:"reserved"`
+	Active          int64  `json:"active"`
+	Waiting         int64  `json:"waiting"`
+	Admissions      int64  `json:"admissions"`
+	PeakActive      int64  `json:"peak_active"`
+	OrderViolations int64  `json:"order_violations"`
+	WaitTotalMS     int64  `json:"wait_total_ms"`
+	WaitMaxMS       int64  `json:"wait_max_ms"`
+	Remaining       int64  `json:"remaining"`
+	Reserved        int64  `json:"reserved"`
+	ActiveLimit     int64  `json:"active_limit"`
+	Mode            string `json:"mode"`
+	Name            string `json:"name"`
 }
 
 func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {

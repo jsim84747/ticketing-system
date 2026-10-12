@@ -149,16 +149,70 @@ func TestLeavePromotesExactlyFIFO(t *testing.T) {
 		t.Fatalf("admitted duplicate %+v %v", v, err)
 	}
 }
-func TestConfigMismatchFailsClosed(t *testing.T) {
-	s, e, _ := setup(t, DefaultConfig())
+
+// Settings live in Redis, so a server started with different defaults still
+// enforces the stored limit instead of disagreeing with its peers.
+func TestStoredSettingsWinOverServerDefaults(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, _ := setup(t, c)
 	ctx := context.Background()
-	if _, err := s.Join(ctx, e, "one"); err != nil {
-		t.Fatal(err)
-	}
+	s.Join(ctx, e, "one")
+	s.Join(ctx, e, "two")
 	other := *s
 	other.Config.ActiveLimit = 2000
-	if _, err := other.Tick(ctx, e); err == nil {
-		t.Fatal("different limits accepted")
+	if ids, err := other.Tick(ctx, e); err != nil || len(ids) != 1 {
+		t.Fatalf("tick with other defaults admitted %v %v", ids, err)
+	}
+}
+
+func TestManualModeAndSettings(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, _ := setup(t, c)
+	ctx := context.Background()
+	for i := 1; i <= 6; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	manual, name := "manual", "Spring Concert"
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	// In manual mode the worker only expires leases; it admits nobody.
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 0 {
+		t.Fatalf("manual tick admitted %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "1"); v.Status != "waiting" || v.Name != name || v.Mode != "manual" || v.EstimatedWaitSeconds != nil {
+		t.Fatalf("waiting status %+v", v)
+	}
+	// The admin admits users in FIFO order, still capped by the limit.
+	if ids, err := s.Admit(ctx, e, 1); err != nil || len(ids) != 1 || ids[0] != "1" {
+		t.Fatalf("admit 1: %v %v", ids, err)
+	}
+	if ids, err := s.Admit(ctx, e, 5); err != nil || len(ids) != 1 || ids[0] != "2" {
+		t.Fatalf("admit capped by limit: %v %v", ids, err)
+	}
+	// Raising the limit makes room; switching back to auto lets the worker fill it.
+	limit, auto, remaining := 4, "auto", 7
+	if err := s.UpdateSettings(ctx, e, Settings{ActiveLimit: &limit, Mode: &auto, Remaining: &remaining}); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "3" || ids[1] != "4" {
+		t.Fatalf("auto tick after raising limit: %v %v", ids, err)
+	}
+	st, err := s.Stats(ctx, e)
+	if err != nil || st.Active != 4 || st.Waiting != 2 || st.ActiveLimit != 4 || st.Mode != "auto" || st.Name != name || st.Remaining != 7 || st.OrderViolations != 0 {
+		t.Fatalf("stats %+v %v", st, err)
+	}
+	bad, badMode := 0, "sometimes"
+	if err := s.UpdateSettings(ctx, e, Settings{ActiveLimit: &bad}); err == nil {
+		t.Fatal("limit 0 accepted")
+	}
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &badMode}); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
+	if _, err := s.Admit(ctx, e, 0); err == nil {
+		t.Fatal("admit 0 accepted")
 	}
 }
 

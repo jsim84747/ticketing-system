@@ -41,7 +41,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 	// needs no ?event= query. Other events stay reachable with ?event=<id>.
 	page, _ := fs.ReadFile(static, "index.html")
 	if len(events) > 0 {
-		page = []byte(strings.Replace(string(page), `<html lang="ko">`, `<html lang="ko" data-event="`+html.EscapeString(events[0])+`">`, 1))
+		page = []byte(strings.Replace(string(page), `<html lang="en">`, `<html lang="en" data-event="`+html.EscapeString(events[0])+`">`, 1))
 	}
 	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -70,8 +70,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 	}
 	m.HandleFunc("GET /admin/api/events", admin(func(w http.ResponseWriter, r *http.Request) {
 		type eventStats struct {
-			ID          string `json:"id"`
-			ActiveLimit int    `json:"active_limit"`
+			ID string `json:"id"`
 			queue.Stats
 		}
 		out := make([]eventStats, 0, len(events))
@@ -81,7 +80,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 				problem(w, 503, "queue unavailable")
 				return
 			}
-			out = append(out, eventStats{e, q.Config.ActiveLimit, s})
+			out = append(out, eventStats{e, s})
 		}
 		respond(w, 200, out)
 	}))
@@ -94,6 +93,39 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 		total := len(users)
 		users = users[:min(total, 100)]
 		respond(w, 200, map[string]any{"total": total, "users": users})
+	}))
+	m.HandleFunc("POST /admin/api/events/{id}/settings", admin(func(w http.ResponseWriter, r *http.Request) {
+		var v queue.Settings
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&v); err != nil {
+			problem(w, 400, "invalid settings")
+			return
+		}
+		if err := v.Validate(); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
+		if err := q.UpdateSettings(r.Context(), r.PathValue("id"), v); err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	m.HandleFunc("POST /admin/api/events/{id}/admit", admin(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Count int `json:"count"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Count < 1 || body.Count > 1000 {
+			problem(w, 400, "count must be between 1 and 1000")
+			return
+		}
+		ids, err := q.Admit(r.Context(), r.PathValue("id"), body.Count)
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		respond(w, 200, map[string]int{"admitted": len(ids)})
 	}))
 	m.HandleFunc("POST /admin/api/events/{id}/kick", admin(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

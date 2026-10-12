@@ -27,3 +27,18 @@
 .users td:last-child{text-align:right;width:90px}
 .users td button{border:1px solid #e3cfc6;border-radius:7px;background:#fff;color:#8a4b3a;padding:6px 10px;font-size:11px}
 @media(max-width:860px){.admin{padding:24px}.cards{grid-template-columns:repeat(2,1fr)}.toolbar .updated{margin-left:0;width:100%}}
+.capacity-top{display:flex;align-items:center;justify-content:space-between}
+.mode-badge{font-size:10px;letter-spacing:1.5px;font-weight:700;padding:6px 10px;border-radius:20px;background:#e4eccf;color:#456238}
+.mode-badge.manual{background:#f6e4cf;color:#8a5a1f}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+.panel{min-height:0;display:flex;flex-direction:column;gap:14px}
+.panel .room-top{margin-bottom:4px}
+.panel label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:#5e7063}
+.panel input{font:inherit;font-size:15px;padding:12px;border:1px solid #dce4d5;border-radius:10px;background:#fbfcf9;color:#172623}
+#admit{display:flex;flex-direction:column;gap:14px}
+.segmented{display:grid;grid-template-columns:1fr 1fr;background:#edf1e7;border-radius:10px;padding:4px}
+.segmented button{border:0;background:transparent;padding:11px;border-radius:8px;font-size:13px;font-weight:650;color:#5e7063}
+.segmented button[aria-checked=true]{background:#fff;color:#18362c;box-shadow:0 1px 4px #1f382714}
+.help{font-size:12px;line-height:1.7;color:#69766e;margin:0}
+.admin-message.ok{color:#456830}
+@media(max-width:860px){.panels{grid-template-columns:1fr}}

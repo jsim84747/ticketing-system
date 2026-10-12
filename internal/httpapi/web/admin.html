@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ticketing — 관리자</title>
+<title>Ticketing — Admin</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/admin.css">
 <script src="/admin.js" defer></script>
@@ -11,49 +11,74 @@
 <header><a href="/admin" class="brand">ticketing<span>●</span></a><span class="tag">ADMIN CONSOLE</span></header>
 <main class="admin">
 <section id="login" class="room login">
-<div class="room-top"><span class="live-dot"></span><span>관리자 로그인</span></div>
+<div class="room-top"><span class="live-dot"></span><span>Admin sign in</span></div>
 <form id="login-form">
-<label for="password" class="caption">관리자 비밀번호</label>
+<label for="password" class="caption">Admin password</label>
 <input id="password" type="password" autocomplete="current-password" required>
-<button class="primary" type="submit">로그인 <span>→</span></button>
+<button class="primary" type="submit">Sign in <span>→</span></button>
 </form>
 <p id="login-message" class="admin-message" role="status" aria-live="polite"></p>
 </section>
 
 <section id="dashboard" hidden>
 <div class="toolbar">
-<label>이벤트 <select id="event"></select></label>
-<a id="user-page" target="_blank" rel="noopener noreferrer">사용자 페이지 ↗</a>
-<a id="test-page" target="_blank" rel="noopener noreferrer">테스트 사용자 탭 ↗</a>
-<span id="updated" class="updated">불러오는 중</span>
-<button id="logout" class="secondary">로그아웃</button>
+<label>Event <select id="event"></select></label>
+<a id="user-page" target="_blank" rel="noopener noreferrer">User page ↗</a>
+<a id="test-page" target="_blank" rel="noopener noreferrer">Test user tab ↗</a>
+<span id="updated" class="updated">Loading</span>
+<button id="logout" class="secondary">Sign out</button>
 </div>
 
 <div class="room capacity">
-<p class="caption">현재 입장 중</p>
-<div class="number"><span id="active">—</span><small id="limit">/ — 명</small></div>
-<div class="progress-label"><span>정원 사용률</span><span id="usage-text">0%</span></div>
-<progress id="usage" value="0" max="100" aria-label="정원 사용률"></progress>
+<div class="capacity-top"><p class="caption">Admitted right now</p><span id="mode-badge" class="mode-badge">AUTO</span></div>
+<div class="number"><span id="active">—</span><small id="limit">/ —</small></div>
+<div class="progress-label"><span>Capacity used</span><span id="usage-text">0%</span></div>
+<progress id="usage" value="0" max="100" aria-label="Capacity used"></progress>
+</div>
+
+<div class="panels">
+<form id="settings" class="room panel">
+<div class="room-top"><span class="live-dot"></span><span>Event settings</span></div>
+<label>Ticket name<input id="set-name" type="text" maxlength="80" placeholder="The Next Stage"></label>
+<label>Max concurrent users<input id="set-limit" type="number" min="1" max="100000" required></label>
+<label>Remaining tickets<input id="set-remaining" type="number" min="0" max="10000000" required></label>
+<button class="primary" type="submit">Save settings <span>→</span></button>
+<p id="settings-message" class="admin-message" role="status" aria-live="polite"></p>
+</form>
+
+<div class="room panel">
+<div class="room-top"><span class="live-dot"></span><span>Admission mode</span></div>
+<div class="segmented" role="radiogroup" aria-label="Admission mode">
+<button type="button" id="mode-auto" role="radio" aria-checked="true">Auto</button>
+<button type="button" id="mode-manual" role="radio" aria-checked="false">Manual</button>
+</div>
+<p id="mode-help" class="help">The next person in line is let in automatically whenever a spot opens.</p>
+<form id="admit" hidden>
+<label>Let in the next<input id="admit-count" type="number" min="1" max="1000" value="1" required></label>
+<button class="primary" type="submit">Admit <span>→</span></button>
+</form>
+<p id="mode-message" class="admin-message" role="status" aria-live="polite"></p>
+</div>
 </div>
 
 <div class="cards">
-<div class="card"><span>대기 중</span><strong id="waiting">—</strong></div>
-<div class="card"><span>남은 티켓</span><strong id="remaining">—</strong></div>
-<div class="card"><span>예약 완료</span><strong id="reserved">—</strong></div>
-<div class="card"><span>누적 입장</span><strong id="admissions">—</strong></div>
-<div class="card"><span>최대 동시 입장</span><strong id="peak">—</strong></div>
-<div class="card"><span>순서 위반</span><strong id="violations">—</strong></div>
-<div class="card"><span>평균 대기 시간</span><strong id="wait-avg">—</strong></div>
-<div class="card"><span>최대 대기 시간</span><strong id="wait-max">—</strong></div>
+<div class="card"><span>Waiting</span><strong id="waiting">—</strong></div>
+<div class="card"><span>Tickets left</span><strong id="remaining">—</strong></div>
+<div class="card"><span>Reserved</span><strong id="reserved">—</strong></div>
+<div class="card"><span>Total admitted</span><strong id="admissions">—</strong></div>
+<div class="card"><span>Peak concurrent</span><strong id="peak">—</strong></div>
+<div class="card"><span>Order violations</span><strong id="violations">—</strong></div>
+<div class="card"><span>Average wait</span><strong id="wait-avg">—</strong></div>
+<div class="card"><span>Longest wait</span><strong id="wait-max">—</strong></div>
 </div>
 
 <div class="room users">
-<div class="room-top"><span class="live-dot"></span><span>입장 중인 사용자</span><span id="users-count" class="users-count"></span></div>
-<table><thead><tr><th>사용자 ID</th><th></th></tr></thead><tbody id="users"></tbody></table>
-<p id="users-empty" class="admin-message">입장 중인 사용자가 없습니다.</p>
+<div class="room-top"><span class="live-dot"></span><span>Admitted users</span><span id="users-count" class="users-count"></span></div>
+<table><thead><tr><th>User ID</th><th></th></tr></thead><tbody id="users"></tbody></table>
+<p id="users-empty" class="admin-message">No one is admitted right now.</p>
 </div>
 <p id="message" class="admin-message" role="status" aria-live="polite"></p>
 </section>
 </main>
-<footer><span>Redis + Go · 관리자 콘솔</span><span>2초마다 자동 새로고침</span></footer>
+<footer><span>Redis + Go · Admin console</span><span>Refreshes every 2 seconds</span></footer>
 </body></html>

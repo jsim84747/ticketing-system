@@ -263,8 +263,7 @@ func TestAdminAPI(t *testing.T) {
 	w := call(h, "GET", "/admin/api/events", "admin-secret", "")
 	assertCode(w, 200)
 	var list []struct {
-		ID          string `json:"id"`
-		ActiveLimit int    `json:"active_limit"`
+		ID string `json:"id"`
 		queue.Stats
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
@@ -291,5 +290,32 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if v, _ := q.Status(ctx, event, "second"); v.Status != "admitted" {
 		t.Fatalf("next user status %q", v.Status)
+	}
+
+	// Settings: validation, then name, capacity, inventory and manual mode.
+	settings := "/admin/api/events/" + event + "/settings"
+	assertCode(call(h, "POST", settings, "", `{"mode":"manual"}`), 401)
+	assertCode(call(h, "POST", settings, "admin-secret", `{"active_limit":0}`), 400)
+	assertCode(call(h, "POST", settings, "admin-secret", `{"mode":"later"}`), 400)
+	assertCode(call(h, "POST", settings, "admin-secret", `{"unknown":1}`), 400)
+	assertCode(call(h, "POST", settings, "admin-secret", `{"name":"Spring Concert","active_limit":2,"remaining":3,"mode":"manual"}`), 204)
+	for _, u := range []string{"third", "fourth"} {
+		q.Join(ctx, event, u)
+	}
+	if ids, _ := q.Tick(ctx, event); len(ids) != 0 {
+		t.Fatalf("manual mode worker admitted %v", ids)
+	}
+	admit := "/admin/api/events/" + event + "/admit"
+	assertCode(call(h, "POST", admit, "admin-secret", `{"count":0}`), 400)
+	w = call(h, "POST", admit, "admin-secret", `{"count":5}`)
+	assertCode(w, 200)
+	if !strings.Contains(w.Body.String(), `"admitted":1`) {
+		t.Fatalf("admit should fill only the one free slot: %s", w.Body.String())
+	}
+	w = call(h, "GET", "/admin/api/events", "admin-secret", "")
+	for _, want := range []string{`"name":"Spring Concert"`, `"active_limit":2`, `"remaining":3`, `"mode":"manual"`, `"active":2`, `"waiting":1`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("events missing %s: %s", want, w.Body.String())
+		}
 	}
 }

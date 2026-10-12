@@ -36,7 +36,7 @@ openssl rand -hex 32
 docker compose up --build
 ```
 
-Open the [default screen](http://localhost:8080). To change `.env` to `ACTIVE_LIMIT=2` for tab testing, set it **before the first run**. If you change the capacity configuration for an event that is already registered, startup is rejected with `CONFIG_MISMATCH` as a safety measure. Use a new event ID for a new test, such as `EVENT_IDS=demo-small`.
+Open the [default screen](http://localhost:8080). `ACTIVE_LIMIT`, `HEARTBEAT_TIMEOUT` and `MAX_STAY` only seed an event the first time it is created. After that, its settings live in Redis and are changed from the admin page, so restarting with different values does not change an existing event. Use a new event ID for a fresh configuration, such as `EVENT_IDS=demo-small`.
 
 Compose Redis preserves AOF data in a volume. `docker compose down` does not delete the volume. Docker was unavailable on this computer, so the Compose build was not run; actual validation used native Go/Redis.
 
@@ -58,6 +58,8 @@ Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event con
 
 - **User page** (`/`): the waiting room only. The root URL opens the first event in `EVENT_IDS`; other events are reachable with `/?event=<id>`. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
 - **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every 2 seconds. Admins can remove an admitted user, and the slot passes to the next user in line. It also links to a test user tab with the debug tools enabled.
+- **Event settings**: the admin page edits the ticket name shown to users, the maximum number of concurrent users, and the remaining ticket count. Changes apply immediately on every server. Lowering the limit never evicts anyone; admission pauses until occupancy falls below the new limit.
+- **Auto and manual mode**: in auto mode the worker admits the next user whenever a spot opens. In manual mode the worker still expires stale and overstayed users but admits no one; the admin admits the next N users with a button, still in FIFO order and capped by the limit. Users in manual mode see "Set by organizer" instead of an estimated wait.
 
 `demo.sh` generates an admin password in `.tools/demo-admin-token` and prints it on startup.
 
@@ -92,7 +94,7 @@ If the application calls `ZCARD → calculate available slots → ZREM → ZADD`
 
 If capacity is C and there are A admitted users immediately before execution, only `min(C-A, number of waiting users, 1000)` users are added. All admission changes on the same Redis primary pass through this script, so capacity is never exceeded. New joins enter the queue first even when slots are available; only workers handle admission. This prevents them from overtaking existing waiting users.
 
-Running workers on multiple servers requires neither a distributed lock nor leader election. Per-event configuration is also recorded in Redis to block servers running with different capacities. Each script execution limits admission and expiration processing to batches of at most 1,000 users each, reducing long periods of Redis monopolization. [Redis Lua atomicity documentation](https://redis.io/docs/latest/develop/programmability/eval-intro/)
+Running workers on multiple servers requires neither a distributed lock nor leader election. Per-event settings (capacity, timeouts, mode, ticket name) are stored in Redis and read by the script on every run, so all servers always enforce the same values, even if they were started with different defaults. Each script execution limits admission and expiration processing to batches of at most 1,000 users each, reducing long periods of Redis monopolization. [Redis Lua atomicity documentation](https://redis.io/docs/latest/develop/programmability/eval-intro/)
 
 Keys use the same hash tag, as in `vwr:{event-id}:waiting`. The design places all keys required for an event in the same slot, but the current connection code uses a single Redis client, and Redis Cluster deployment has not been validated.
 
@@ -134,6 +136,8 @@ First, call `POST /session` to obtain `{user_id, session_token}`, then send `Aut
 | GET | `/healthz` | Redis connectivity status |
 | GET | `/admin/api/events` | Admin: per-event occupancy, queue length, inventory and wait metrics |
 | GET | `/admin/api/events/{id}/active` | Admin: admitted user IDs (first 100) and total |
+| POST | `/admin/api/events/{id}/settings` | Admin: any of `{"name", "active_limit", "remaining", "mode": "auto" \| "manual"}` |
+| POST | `/admin/api/events/{id}/admit` | Admin: `{"count": N}` admits up to N users from the front of the queue (1–1000) |
 | POST | `/admin/api/events/{id}/kick` | Admin: `{"user_id": "..."}` removes a user so the next in line is admitted |
 
 Admin endpoints require `Authorization: Bearer <ADMIN_TOKEN>` and return 404 when `ADMIN_TOKEN` is not set.
@@ -146,7 +150,7 @@ Example waiting response:
 
 An admission response includes `status: "admitted"`, `position: 0`, `token`, and `expires_at` (Unix ms). Other states are `absent`, `expired`, and `completed`. `completed` includes `reservation_id`.
 
-Errors: missing/expired authentication 401, missing/tampered token or expired admission 403, unknown event 404, sold out/already reserved 409, Redis failure/configuration mismatch 503. Do not put session or admission tokens in URLs or record them in logs.
+Errors: missing/expired authentication 401, missing/tampered token or expired admission 403, unknown event 404, sold out/already reserved 409, invalid admin settings 400, Redis failure 503. Do not put session or admission tokens in URLs or record them in logs.
 
 ```sh
 # HTTP example: set SESSION to session_token from the /session response.
@@ -160,7 +164,7 @@ curl -X POST -H "Authorization: Bearer $SESSION" -H "X-Admission-Token: $ADMISSI
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `ACTIVE_LIMIT` | `1000` | Per-event capacity, 1–100000 |
+| `ACTIVE_LIMIT` | `1000` | Initial per-event capacity, 1–100000; change it later on the admin page |
 | `HEARTBEAT_TIMEOUT` | `30s` | Expiration interval since the last heartbeat |
 | `MAX_STAY` | `10m` | Maximum stay duration from initial admission |
 | `WORKER_INTERVAL` | `1s` | Admission/cleanup interval on each server |
