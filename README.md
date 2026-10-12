@@ -69,10 +69,13 @@ Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event con
 ### User Page and Admin Page
 
 - **User page** (`/`): the waiting room only. The root URL opens the first event in `EVENT_IDS`; other events are reachable with `/?event=<id>`. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
-- **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every 2 seconds. Admins can remove an admitted user, and the slot passes to the next user in line. It also links to a test user tab with the debug tools enabled.
+- **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every second. Admins can remove an admitted user, and the slot passes to the next user in line. It also links to a test user tab with the debug tools enabled.
 - **Reservations**: the purchase form asks for first name, last name and email. They are validated on the server and saved with the reservation in the same atomic step that takes the ticket, so invalid details never use up a ticket. The admin page lists reservations, lets the admin correct a reservation's name or contact detail (the ticket, number and time stay the same; unlike the purchase form, the admin may save any text as the email, or leave it empty) or delete a reservation, which returns its ticket to the remaining count, and can download them as CSV (fields that a spreadsheet would treat as formulas are escaped). This is personal data: it lives only in Redis, which the demo stores under `.tools/` (not committed to Git).
 - **Event settings**: the admin page edits the ticket name shown to users, the sale status badge (Open, Closed, or custom text up to 40 characters; display only, it does not stop people joining), the maximum number of concurrent users, and the remaining ticket count. Changes apply immediately on every server. Lowering the limit never evicts anyone; admission pauses until occupancy falls below the new limit.
 - **Auto and manual mode**: in auto mode the worker admits the next user whenever a spot opens. In manual mode the worker still expires stale and overstayed users but admits no one; the admin admits the next N users with a button, still in FIFO order and capped by the limit. Users in manual mode see "Set by organizer" instead of an estimated wait.
+- **Locked join button**: when scheduling an opening the admin chooses between letting people line up early and locking the join button. Locked, the button is greyed out with a countdown and unlocks at the opening second, like a real ticket sale; joining earlier is refused by the server (409 "not open yet"). The countdown follows the server clock, sent with every status response, so a visitor whose device clock is wrong cannot click early.
+- **Before joining**: visitors see how many people are in line right now, updated every second.
+- **Ticket quantity**: visitors choose how many tickets to reserve, up to the event's "max tickets per order" (default 4, admin-editable, 1 to 20). The whole quantity is taken atomically; if fewer remain the reservation is refused with how many are left. Deleting a reservation returns all of its tickets. Tickets are free; there is no payment step.
 - **Scheduled opening**: in manual mode the admin can set an opening time. Users can join the line early but nobody is admitted before then; the first worker tick at or after that time (judged by the Redis clock) switches the event to auto mode, and admission starts in FIFO order. Waiting users see a countdown. While an opening is scheduled the doors are closed: every worker tick sends anyone who is admitted back to the front of the line in their original order, and the admit button is disabled, so nobody is inside before the doors open. Switching to auto by hand cancels a pending schedule. The admin enters the time in their computer's time zone (shown on the page); it is stored as an absolute instant, and each visitor sees it converted to their own time zone, with the zone named.
 
 `demo.sh` generates an admin password in `.tools/demo-admin-token` and prints it on startup.
@@ -81,7 +84,7 @@ Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event con
 
 ```mermaid
 flowchart LR
-  B[Browser: per-tab demo session] -->|join / status polling every 2s or SSE| API[Go HTTP servers 1..N]
+  B[Browser: per-tab demo session] -->|join / status polling every 1s or SSE| API[Go HTTP servers 1..N]
   B -->|heartbeat every 10s| API
   B -->|reserve + signed admission token| API
   API -->|HMAC validation of user, event, and admission generation| L[Atomic Redis Lua processing]
@@ -130,7 +133,7 @@ Production use must rely on IDs from authenticated users. The current `/session`
 
 Estimated wait time is `(position × observed average stay duration) / ACTIVE_LIMIT`. If there are no departure samples, the screen shows `null`/“Calculating.” Progress reflects the decrease relative to the first displayed queue position; it does not guarantee a completion time.
 
-The default is HTTP polling every 2 seconds. With `?event=demo&transport=sse`, SSE uses a `fetch` stream that supports the Authorization header. If the connection drops, it falls back to polling. An SSE connection does not replace heartbeats. The current SSE implementation also queries Redis every 2 seconds on the server, so no reduction in Redis query volume is claimed. A future improvement could combine worker change notifications + Pub/Sub + a fresh state query on reconnection.
+The default is HTTP polling every second (one request per waiting visitor per second, so 10,000 visitors is about 10,000 requests per second). With `?event=demo&transport=sse`, SSE uses a `fetch` stream that supports the Authorization header. If the connection drops, it falls back to polling. An SSE connection does not replace heartbeats. The current SSE implementation also queries Redis every second on the server, so no reduction in Redis query volume is claimed. A future improvement could combine worker change notifications + Pub/Sub + a fresh state query on reconnection.
 
 Users who close their tabs while waiting retain their queue positions. When their turn for admission arrives, they are removed 30 seconds later if no heartbeat is received. Choosing not to remove waiting users based on heartbeats preserves queue positions across refreshes and reconnections; there is no separate policy for immediately removing ghost users from long queues.
 
@@ -143,17 +146,17 @@ First, call `POST /session` to obtain `{user_id, session_token}`, then send `Aut
 | POST | `/session` | Issue a 24-hour demo session |
 | POST | `/events/{id}/queue` | Join without duplicates, position/status |
 | GET | `/events/{id}/queue/status` | Queue position, ahead, estimated wait time, admission token |
-| GET | `/events/{id}/queue/stream` | `event: status` SSE, current state every 2 seconds |
+| GET | `/events/{id}/queue/stream` | `event: status` SSE, current state every second |
 | POST | `/events/{id}/queue/heartbeat` | Renew admission lease and return current state |
 | POST | `/events/{id}/queue/leave` | Idempotent departure, HTTP 204 |
-| POST | `/events/{id}/reserve` | Requires `X-Admission-Token` and `{"first_name", "last_name", "email"}`; returns the reservation ID and details |
+| POST | `/events/{id}/reserve` | Requires `X-Admission-Token` and `{"first_name", "last_name", "email", "quantity"}` (quantity defaults to 1); returns the reservation ID and details |
 | GET | `/healthz` | Redis connectivity status |
 | GET | `/admin/api/events` | Admin: per-event occupancy, queue length, inventory and wait metrics |
 | GET | `/admin/api/events/{id}/active` | Admin: admitted user IDs (first 100) and total |
 | GET | `/admin/api/events/{id}/reservations` | Admin: reservations with name, email and time, newest first; `?limit=N` returns only the newest N |
 | PUT | `/admin/api/events/{id}/reservations/{user_id}` | Admin: `{"first_name", "last_name", "email"}` corrects a reservation's details (email is free text here) |
 | DELETE | `/admin/api/events/{id}/reservations/{user_id}` | Admin: cancels a reservation and returns its ticket |
-| POST | `/admin/api/events/{id}/settings` | Admin: any of `{"name", "badge", "active_limit", "remaining", "mode": "auto" \| "manual", "open_at": <unix ms, 0 cancels>}` |
+| POST | `/admin/api/events/{id}/settings` | Admin: any of `{"name", "badge", "active_limit", "remaining", "mode": "auto" \| "manual", "open_at": <unix ms, 0 cancels>, "join_lock", "max_per_order"}` |
 | POST | `/admin/api/events/{id}/admit` | Admin: `{"count": N}` admits up to N users from the front of the queue (1–1000) |
 | POST | `/admin/api/events/{id}/kick` | Admin: `{"user_id": "..."}` removes a user so the next in line is admitted |
 

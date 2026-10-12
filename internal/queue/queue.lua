@@ -12,6 +12,7 @@ redis.call('HSETNX',config,'limit',ARGV[4])
 redis.call('HSETNX',config,'timeout',ARGV[5])
 redis.call('HSETNX',config,'maxstay',ARGV[6])
 redis.call('HSETNX',config,'mode','auto')
+redis.call('HSETNX',config,'max_per_order','4')
 local limit = tonumber(redis.call('HGET',config,'limit'))
 local timeout = tonumber(redis.call('HGET',config,'timeout'))
 local maxstay = tonumber(redis.call('HGET',config,'maxstay'))
@@ -22,13 +23,18 @@ local badge = redis.call('HGET',config,'badge') or ''
 -- Scheduled opening (unix ms, 0 = none): in manual mode users can line up early
 -- and the first tick at or after open_at switches the event to auto admission.
 local openAt = tonumber(redis.call('HGET',config,'open_at') or '0')
+-- With join_lock, people cannot even join the line before open_at, like a
+-- ticket sale whose button unlocks on the hour. Without it they line up early.
+local joinLock = redis.call('HGET',config,'join_lock') == '1'
+-- Tickets one reservation may take.
+local maxPerOrder = tonumber(redis.call('HGET',config,'max_per_order'))
 if action == 'stats' then
   local function metric(key) return tonumber(redis.call('HGET',metrics,key) or '0') end
   return cjson.encode({active=redis.call('ZCARD',active),waiting=redis.call('ZCARD',waiting),
     admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
     wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms'),
     remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations),
-    active_limit=limit,mode=mode,name=name,open_at=openAt,badge=badge})
+    active_limit=limit,mode=mode,name=name,open_at=openAt,badge=badge,join_lock=joinLock,max_per_order=maxPerOrder})
 end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)
@@ -150,8 +156,11 @@ if action == 'edit_reservation' then
 end
 -- Admins cancel a reservation; its ticket goes back on sale.
 if action == 'delete_reservation' then
-  if redis.call('HDEL',reservations,user) == 0 then return redis.error_reply('NOT_FOUND') end
-  redis.call('INCR',stock)
+  local previous = redis.call('HGET',reservations,user)
+  if not previous then return redis.error_reply('NOT_FOUND') end
+  redis.call('HDEL',reservations,user)
+  -- Reservations made before quantities existed hold one ticket.
+  redis.call('INCRBY',stock,tonumber(cjson.decode(previous).quantity) or 1)
   return 'OK'
 end
 if action == 'reserve' then
@@ -164,16 +173,26 @@ if action == 'reserve' then
   if not redis.call('ZSCORE',active,user) or redis.call('HGET',generation,user) ~= ARGV[7] then
     return redis.error_reply('NOT_ADMITTED')
   end
+  local qty = tonumber(ARGV[12])
+  if not qty or qty < 1 or qty > maxPerOrder then return redis.error_reply('BAD_QUANTITY') end
   local remaining = tonumber(redis.call('GET',stock) or '0')
   if remaining <= 0 then return redis.error_reply('SOLD_OUT') end
-  local result = cjson.encode({reservation_id=ARGV[8],generation=ARGV[7],
+  if remaining < qty then return redis.error_reply('NOT_ENOUGH '..remaining) end
+  local result = cjson.encode({reservation_id=ARGV[8],generation=ARGV[7],quantity=qty,
     first_name=ARGV[9],last_name=ARGV[10],email=ARGV[11],reserved_at=now})
-  redis.call('DECR',stock)
+  redis.call('DECRBY',stock,qty)
   redis.call('HSET',reservations,user,result)
   remove(user)
   return result
 end
-local function encode(v) v.name = name; v.mode = mode; v.open_at = openAt; v.badge = badge; return cjson.encode(v) end
+-- now is the server clock, so browsers count down to the opening without
+-- trusting their own clocks.
+-- in_line and inside let visitors see how busy it is before they join.
+local function encode(v)
+  v.name = name; v.mode = mode; v.open_at = openAt; v.badge = badge; v.join_lock = joinLock; v.now = now
+  v.max_per_order = maxPerOrder; v.in_line = redis.call('ZCARD',waiting); v.inside = redis.call('ZCARD',active)
+  return cjson.encode(v)
+end
 local function status()
   local reservation = redis.call('HGET',reservations,user)
   if reservation then
@@ -198,7 +217,9 @@ local function status()
   return encode({status=wasExpired and 'expired' or 'absent',position=0,ahead=0})
 end
 if action == 'join' then
-  if not redis.call('HGET',reservations,user) and not redis.call('ZSCORE',waiting,user) and not redis.call('ZSCORE',active,user) then
+  local fresh = not redis.call('HGET',reservations,user) and not redis.call('ZSCORE',waiting,user) and not redis.call('ZSCORE',active,user)
+  if fresh and joinLock and mode == 'manual' and openAt > now then return redis.error_reply('NOT_OPEN') end
+  if fresh then
     -- Logical microsecond score: INCR also orders ties and clock regressions.
     local s = math.max(redis.call('INCR',sequence), now * 1000)
     redis.call('SET',sequence,string.format('%.0f',s))

@@ -325,6 +325,13 @@ func TestAdminAPI(t *testing.T) {
 			t.Fatalf("events missing %s: %s", want, w.Body.String())
 		}
 	}
+
+	// With the join button locked, a new visitor cannot join before opening.
+	assertCode(call(h, "POST", settings, "admin-secret", `{"join_lock":true}`), 204)
+	_, visitor, _ := signer.Session()
+	if w := call(h, "POST", "/events/"+event+"/queue", visitor, ""); w.Code != 409 || !strings.Contains(w.Body.String(), "not open yet") {
+		t.Fatalf("locked join: %d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestReservationDetailsAndAdminList(t *testing.T) {
@@ -442,5 +449,93 @@ func TestReservationDetailsAndAdminList(t *testing.T) {
 	}
 	if w := call("GET", "/admin/api/events/"+event+"/reservations", "admin-secret", "", ""); !strings.Contains(w.Body.String(), `"total":0`) {
 		t.Fatalf("reservation still listed: %s", w.Body.String())
+	}
+}
+
+func TestTicketQuantities(t *testing.T) {
+	ctx := context.Background()
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:16379"
+	}
+	r := redis.NewClient(&redis.Options{Addr: addr})
+	defer r.Close()
+	cfg := queue.DefaultConfig()
+	cfg.ActiveLimit = 2
+	q, _ := queue.New(r, cfg, nil)
+	event := fmt.Sprintf("http-qty-%d", time.Now().UnixNano())
+	if err := q.InitEvent(ctx, event, 5); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		keys, _ := r.Keys(ctx, "vwr:{"+event+"}:*").Result()
+		if len(keys) > 0 {
+			r.Del(ctx, keys...)
+		}
+	}()
+	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), nil)
+	h := Handler(q, signer, []string{event}, "admin-secret")
+	call := func(method, path, bearer, admission, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		if admission != "" {
+			req.Header.Set("X-Admission-Token", admission)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	base := "/events/" + event
+	admit := func() (string, string) {
+		user, session, _ := signer.Session()
+		call("POST", base+"/queue", session, "", "")
+		q.Tick(ctx, event)
+		var st queue.Status
+		json.Unmarshal(call("GET", base+"/queue/status", session, "", "").Body.Bytes(), &st)
+		if st.Token == "" || st.MaxPerOrder != 4 {
+			t.Fatalf("admitted status: %+v", st)
+		}
+		return user, session + "|" + st.Token
+	}
+	details := func(n int) string {
+		return fmt.Sprintf(`{"first_name":"A","last_name":"B","email":"a@b.co","quantity":%d}`, n)
+	}
+	reserve := func(pair string, n int) *httptest.ResponseRecorder {
+		s, tk, _ := strings.Cut(pair, "|")
+		return call("POST", base+"/reserve", s, tk, details(n))
+	}
+	first, a := admit()
+	_, b := admit()
+	if w := reserve(a, 5); w.Code != 400 {
+		t.Fatalf("5 tickets is over the default limit of 4: %d %s", w.Code, w.Body.String())
+	}
+	if w := reserve(a, 4); w.Code != 200 || !strings.Contains(w.Body.String(), `"quantity":4`) {
+		t.Fatalf("reserve 4: %d %s", w.Code, w.Body.String())
+	}
+	if w := reserve(b, 2); w.Code != 409 || !strings.Contains(w.Body.String(), "only 1 tickets left") {
+		t.Fatalf("reserve 2 with 1 left: %d %s", w.Code, w.Body.String())
+	}
+	if n := r.Get(ctx, "vwr:{"+event+"}:stock").Val(); n != "1" {
+		t.Fatalf("stock after 4 of 5: %s", n)
+	}
+	// Deleting returns all four tickets.
+	if w := call("DELETE", "/admin/api/events/"+event+"/reservations/"+first, "admin-secret", "", ""); w.Code != 204 {
+		t.Fatalf("delete: %d", w.Code)
+	}
+	if n := r.Get(ctx, "vwr:{"+event+"}:stock").Val(); n != "5" {
+		t.Fatalf("stock after delete: %s", n)
+	}
+	// Admins can change the per-order limit.
+	if w := call("POST", "/admin/api/events/"+event+"/settings", "admin-secret", "", `{"max_per_order":21}`); w.Code != 400 {
+		t.Fatalf("limit 21: %d", w.Code)
+	}
+	if w := call("POST", "/admin/api/events/"+event+"/settings", "admin-secret", "", `{"max_per_order":1}`); w.Code != 204 {
+		t.Fatalf("limit 1: %d", w.Code)
+	}
+	if w := reserve(b, 2); w.Code != 400 {
+		t.Fatalf("2 tickets over a limit of 1: %d %s", w.Code, w.Body.String())
+	}
+	if w := reserve(b, 1); w.Code != 200 {
+		t.Fatalf("reserve 1: %d %s", w.Code, w.Body.String())
 	}
 }

@@ -45,6 +45,11 @@ type Status struct {
 	Mode                 string `json:"mode"`
 	OpenAt               int64  `json:"open_at"`
 	Badge                string `json:"badge"`
+	JoinLock             bool   `json:"join_lock"`
+	Now                  int64  `json:"now"`
+	MaxPerOrder          int    `json:"max_per_order"`
+	InLine               int64  `json:"in_line"`
+	Inside               int64  `json:"inside"`
 }
 type Store struct {
 	Client *redis.Client
@@ -95,8 +100,16 @@ func (s *Store) status(ctx context.Context, event, action, user string) (Status,
 	err = json.Unmarshal([]byte(raw), &v)
 	return v, err
 }
+
+// ErrNotOpen means joining is locked until the scheduled opening time.
+var ErrNotOpen = errors.New("not open yet")
+
 func (s *Store) Join(ctx context.Context, event, user string) (Status, error) {
-	return s.status(ctx, event, "join", user)
+	v, err := s.status(ctx, event, "join", user)
+	if err != nil && strings.Contains(err.Error(), "NOT_OPEN") {
+		return v, ErrNotOpen
+	}
+	return v, err
 }
 func (s *Store) Status(ctx context.Context, event, user string) (Status, error) {
 	return s.status(ctx, event, "status", user)
@@ -143,6 +156,7 @@ type Reservation struct {
 	Generation string `json:"generation,omitempty"`
 	UserID     string `json:"user_id,omitempty"`
 	Customer
+	Quantity   int   `json:"quantity,omitempty"`
 	ReservedAt int64 `json:"reserved_at,omitempty"`
 }
 
@@ -178,12 +192,12 @@ func (s *Store) InitEvent(ctx context.Context, event string, tickets int) error 
 	}
 	return s.Client.SetNX(ctx, s.keys(event)[9], tickets, 0).Err()
 }
-func (s *Store) Reserve(ctx context.Context, event, user, generation, id string, who Customer) (Reservation, error) {
+func (s *Store) Reserve(ctx context.Context, event, user, generation, id string, who Customer, quantity int) (Reservation, error) {
 	who, err := who.Normalize()
 	if err != nil {
 		return Reservation{}, err
 	}
-	raw, err := s.run(ctx, event, "reserve", user, generation, id, who.FirstName, who.LastName, who.Email)
+	raw, err := s.run(ctx, event, "reserve", user, generation, id, who.FirstName, who.LastName, who.Email, quantity)
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -289,6 +303,11 @@ type Settings struct {
 	// OpenAt schedules manual mode to switch to auto admission at this
 	// unix time in milliseconds; 0 cancels the schedule.
 	OpenAt *int64 `json:"open_at"`
+	// JoinLock keeps the join button locked until OpenAt instead of letting
+	// people line up early.
+	JoinLock *bool `json:"join_lock"`
+	// MaxPerOrder caps how many tickets one reservation may take.
+	MaxPerOrder *int `json:"max_per_order"`
 }
 
 func (v Settings) Validate() error {
@@ -303,6 +322,8 @@ func (v Settings) Validate() error {
 		return fmt.Errorf("remaining tickets must be between 0 and 10000000")
 	case v.Mode != nil && *v.Mode != "auto" && *v.Mode != "manual":
 		return fmt.Errorf(`mode must be "auto" or "manual"`)
+	case v.MaxPerOrder != nil && (*v.MaxPerOrder < 1 || *v.MaxPerOrder > 20):
+		return fmt.Errorf("max tickets per order must be between 1 and 20")
 	case v.OpenAt != nil && *v.OpenAt < 0:
 		return fmt.Errorf("opening time must not be negative")
 	}
@@ -341,6 +362,16 @@ func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) er
 		if v.Remaining != nil {
 			p.Set(ctx, k[9], *v.Remaining, 0)
 		}
+		if v.MaxPerOrder != nil {
+			p.HSet(ctx, k[7], "max_per_order", *v.MaxPerOrder)
+		}
+		if v.JoinLock != nil {
+			lock := "0"
+			if *v.JoinLock {
+				lock = "1"
+			}
+			p.HSet(ctx, k[7], "join_lock", lock)
+		}
 		if v.OpenAt != nil {
 			p.HSet(ctx, k[7], "open_at", *v.OpenAt)
 		} else if v.Mode != nil && *v.Mode == "auto" {
@@ -373,6 +404,8 @@ type Stats struct {
 	Name            string `json:"name"`
 	OpenAt          int64  `json:"open_at"`
 	Badge           string `json:"badge"`
+	JoinLock        bool   `json:"join_lock"`
+	MaxPerOrder     int    `json:"max_per_order"`
 }
 
 func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {

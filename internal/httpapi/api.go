@@ -231,6 +231,10 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			default:
 				v, err = q.Status(r.Context(), event, user)
 			}
+			if errors.Is(err, queue.ErrNotOpen) {
+				problem(w, 409, "not open yet")
+				return
+			}
 			if err != nil {
 				problem(w, 503, "queue unavailable")
 				return
@@ -249,7 +253,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Accel-Buffering", "no")
 		controller := http.NewResponseController(w)
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
 			if _, err := signer.Verify(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), "session"); err != nil {
@@ -295,28 +299,41 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			problem(w, 403, "valid admission token required")
 			return
 		}
-		var who queue.Customer
-		if err := json.NewDecoder(r.Body).Decode(&who); err != nil {
+		var body struct {
+			queue.Customer
+			Quantity int `json:"quantity"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			problem(w, 400, "first name, last name and email are required")
 			return
 		}
-		if who, err = who.Normalize(); err != nil {
+		who, err := body.Customer.Normalize()
+		if err != nil {
 			problem(w, 400, err.Error())
 			return
+		}
+		if body.Quantity == 0 {
+			body.Quantity = 1
 		}
 		id, err := auth.ID()
 		if err != nil {
 			problem(w, 500, "reservation unavailable")
 			return
 		}
-		v, err := q.Reserve(r.Context(), event, user, c.Generation, id, who)
+		v, err := q.Reserve(r.Context(), event, user, c.Generation, id, who, body.Quantity)
 		if err != nil {
 			switch strings.TrimPrefix(err.Error(), "ERR ") {
 			case "NOT_ADMITTED":
 				problem(w, 403, "admission expired")
 			case "SOLD_OUT", "ALREADY_RESERVED":
 				problem(w, 409, strings.TrimPrefix(err.Error(), "ERR "))
+			case "BAD_QUANTITY":
+				problem(w, 400, "that many tickets cannot be reserved in one order")
 			default:
+				if left, ok := strings.CutPrefix(strings.TrimPrefix(err.Error(), "ERR "), "NOT_ENOUGH "); ok {
+					problem(w, 409, "only "+left+" tickets left")
+					return
+				}
 				problem(w, 503, "reservation unavailable")
 			}
 			return

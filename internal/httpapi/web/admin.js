@@ -23,7 +23,7 @@ function fillSettings(e, force) {
   if (!force && $('settings').contains(document.activeElement)) return;
   if (!force && shownEvent === e.id) return;
   shownEvent = e.id;
-  $('set-name').value = e.name; $('set-limit').value = e.active_limit; $('set-remaining').value = e.remaining;
+  $('set-name').value = e.name; $('set-limit').value = e.active_limit; $('set-remaining').value = e.remaining; $('set-per-order').value = e.max_per_order;
   const preset = ['', 'Open', 'Closed'].includes(e.badge);
   setBadgeChoice(preset ? (e.badge || 'Open') : 'other'); $('set-badge').value = preset ? '' : e.badge;
 }
@@ -38,6 +38,17 @@ const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const zoneShort = date => new Intl.DateTimeFormat('en-US', {timeZoneName: 'short'}).formatToParts(date).find(p => p.type === 'timeZoneName').value;
 $('tz-note').textContent = `Time zone: ${zone} (${zoneShort(new Date())}), from this computer's clock. Visitors see the opening time converted to their own time zone.`;
 const localInput = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+// Before opening: let people line up early, or lock the join button until the time.
+let lockChoice = false;
+function setLockChoice(lock) {
+  lockChoice = lock;
+  document.querySelectorAll('[data-lock]').forEach(b => b.setAttribute('aria-checked', String((b.dataset.lock === '1') === lock)));
+  $('lock-help').textContent = lock
+    ? 'Like a real ticket sale: the Join button is greyed out with a countdown and unlocks at the exact time. Whoever clicks first gets the earliest place.'
+    : 'People can join the line now and keep their place; admission starts at the opening time.';
+}
+document.querySelectorAll('[data-lock]').forEach(b => { b.onclick = () => setLockChoice(b.dataset.lock === '1'); });
+setLockChoice(false);
 function renderSchedule(e) {
   const manual = e.mode === 'manual', scheduled = manual && e.open_at > 0;
   $('schedule').hidden = !manual; $('schedule-form').hidden = scheduled; $('scheduled').hidden = !scheduled;
@@ -45,7 +56,9 @@ function renderSchedule(e) {
   $('admit').hidden = !manual || scheduled;
   if (scheduled) {
     $('scheduled-time').textContent = new Date(e.open_at).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'}) + ` ${zoneShort(new Date(e.open_at))}`;
-    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())} (${zone}). People can line up now; nobody is let in until then, and anyone already inside is sent back to the front of the line.`;
+    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())} (${zone}). ` + (e.join_lock
+      ? 'The Join button is locked until then; it unlocks at the exact time.'
+      : 'People can line up now; nobody is let in until then, and anyone already inside is sent back to the front of the line.');
   } else if (!$('open-at').value) {
     const next = new Date(Date.now() + 5 * 60000); next.setSeconds(0, 0);
     $('open-at').value = localInput(next);
@@ -110,7 +123,7 @@ function button(text, action, cls = '') { return Object.assign(document.createEl
 function reservationRow(r) {
   const row = document.createElement('tr');
   if (editing !== r.user_id) {
-    row.append(cell(fullName(r)), cell(r.email || '—'), cell(when(r.reserved_at)), cell(r.reservation_id));
+    row.append(cell(fullName(r)), cell(r.email || '—'), cell(String(r.quantity || 1)), cell(when(r.reserved_at)), cell(r.reservation_id));
     const actions = document.createElement('td');
     actions.append(button('Edit', () => { editing = r.user_id; $('res-message').textContent = ''; row.replaceWith(reservationRow(r)); }),
       button('Delete', async e => {
@@ -137,7 +150,7 @@ function reservationRow(r) {
   const cancel = button('Cancel', () => { editing = ''; $('res-message').textContent = ''; refresh(); });
   actions.append(save, cancel);
   for (const field of [first, last, email]) field.onkeydown = e => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); };
-  row.append(names, mail, cell(when(r.reserved_at)), cell(r.reservation_id), actions);
+  row.append(names, mail, cell(String(r.quantity || 1)), cell(when(r.reserved_at)), cell(r.reservation_id), actions);
   setTimeout(() => first.focus());
   return row;
 }
@@ -152,8 +165,8 @@ const csvCell = value => { let s = String(value ?? ''); if (/^[=+\-@\t\r]/.test(
 $('csv').onclick = async () => {
   try {
     const v = await api(`/admin/api/events/${encodeURIComponent(selected())}/reservations`);
-    const rows = [['First name', 'Last name', 'Email', 'Reserved at', 'Reservation number', 'User ID'],
-      ...v.reservations.map(r => [r.first_name, r.last_name, r.email, r.reserved_at ? new Date(r.reserved_at).toISOString() : '', r.reservation_id, r.user_id])];
+    const rows = [['First name', 'Last name', 'Email', 'Tickets', 'Reserved at', 'Reservation number', 'User ID'],
+      ...v.reservations.map(r => [r.first_name, r.last_name, r.email, r.quantity || 1, r.reserved_at ? new Date(r.reserved_at).toISOString() : '', r.reservation_id, r.user_id])];
     const blob = new Blob([rows.map(r => r.map(csvCell).join(',')).join('\r\n')], {type: 'text/csv'});
     const link = Object.assign(document.createElement('a'), {href: URL.createObjectURL(blob), download: `reservations-${selected()}.csv`});
     link.click(); URL.revokeObjectURL(link.href);
@@ -170,7 +183,7 @@ async function refresh() {
     if (!token) return;
     $('updated').textContent = 'Disconnected'; $('message').textContent = `Couldn't load data: ${e.message}`;
   }
-  if (token) timer = setTimeout(refresh, 2000);
+  if (token) timer = setTimeout(refresh, 1000);
 }
 async function post(path, body) { return api(`/admin/api/events/${encodeURIComponent(selected())}/${path}`, 'POST', body); }
 function show() { $('login').hidden = true; $('dashboard').hidden = false; refresh(); }
@@ -184,7 +197,7 @@ $('settings').onsubmit = async e => {
   e.preventDefault();
   const badge = badgeChoice === 'other' ? $('set-badge').value.trim() : badgeChoice;
   if (!badge) { flash('settings-message', 'Type a sale status, or pick Open or Closed.', false); return; }
-  const body = {name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value), badge};
+  const body = {name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value), max_per_order: Number($('set-per-order').value), badge};
   try { await post('settings', body); flash('settings-message', 'Settings saved.'); shownEvent = ''; document.activeElement.blur(); refresh(); }
   catch (err) { flash('settings-message', `Couldn't save: ${err.message}`, false); }
 };
@@ -198,7 +211,7 @@ $('schedule-form').onsubmit = async e => {
   e.preventDefault();
   const openAt = new Date($('open-at').value).getTime();
   if (!(openAt > Date.now())) { flash('mode-message', 'Pick a time in the future.', false); return; }
-  try { await post('settings', {mode: 'manual', open_at: openAt}); flash('mode-message', 'Opening scheduled. Anyone already admitted was moved back to the front of the line.'); refresh(); }
+  try { await post('settings', {mode: 'manual', open_at: openAt, join_lock: lockChoice}); flash('mode-message', 'Opening scheduled. Anyone already admitted was moved back to the front of the line.'); refresh(); }
   catch (err) { flash('mode-message', `Couldn't schedule: ${err.message}`, false); }
 };
 $('cancel-schedule').onclick = async () => {

@@ -348,6 +348,41 @@ func TestDoorsStayClosedUntilOpening(t *testing.T) {
 	}
 }
 
+func TestJoinLockedUntilOpening(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	s.Join(ctx, e, "early-bird") // in line before the lock was set
+	manual, lock := "manual", true
+	openAt := clock.Now().Add(time.Minute).UnixMilli()
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &openAt, JoinLock: &lock}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Status(ctx, e, "late")
+	if err != nil || !v.JoinLock || v.OpenAt != openAt || v.Now != clock.Now().UnixMilli() {
+		t.Fatalf("status should carry the lock and server time: %+v %v", v, err)
+	}
+	clock.Add(59 * time.Second)
+	if _, err := s.Join(ctx, e, "late"); err != ErrNotOpen {
+		t.Fatalf("join before opening: %v", err)
+	}
+	// Someone already in line keeps their place and can still poll via join.
+	if v, err := s.Join(ctx, e, "early-bird"); err != nil || v.Position != 1 {
+		t.Fatalf("existing user: %+v %v", v, err)
+	}
+	clock.Add(time.Second)
+	if v, err := s.Join(ctx, e, "late"); err != nil || v.Position != 2 {
+		t.Fatalf("join at opening: %+v %v", v, err)
+	}
+	if ids, _ := s.Tick(ctx, e); len(ids) != 1 || ids[0] != "early-bird" {
+		t.Fatalf("admitted at opening %v", ids)
+	}
+	if st, _ := s.Stats(ctx, e); !st.JoinLock || st.Mode != "auto" {
+		t.Fatalf("stats %+v", st)
+	}
+}
+
 func TestHeartbeatExpiryAndMaxStay(t *testing.T) {
 	c := DefaultConfig()
 	c.ActiveLimit = 2
