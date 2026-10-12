@@ -7,6 +7,7 @@ import (
 	"github.com/jsim84747/ticketing-system/internal/auth"
 	"github.com/jsim84747/ticketing-system/internal/queue"
 	"github.com/redis/go-redis/v9"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -44,7 +45,7 @@ func TestReservationSecurityAndInventory(t *testing.T) {
 		}
 	}()
 	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), clock.Now)
-	h := Handler(q, signer, []string{event, "other"})
+	h := Handler(q, signer, []string{event, "other"}, "")
 	call := func(method, path, session, admission string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		if session != "" {
@@ -166,7 +167,7 @@ func TestSSEAndStatic(t *testing.T) {
 	}()
 	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), nil)
 	user, session, _ := signer.Session()
-	h := Handler(q, signer, []string{event})
+	h := Handler(q, signer, []string{event}, "")
 	if _, err := q.Join(ctx, event, user); err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +183,108 @@ func TestSSEAndStatic(t *testing.T) {
 	if w.Code != 200 || w.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(w.Body.String(), `"status":"admitted"`) || !strings.Contains(w.Body.String(), `"token":`) {
 		t.Fatalf("stream: %d %s", w.Code, w.Body.String())
 	}
-	for _, path := range []string{"/", "/app.js", "/style.css"} {
+	for _, path := range []string{"/", "/app.js", "/style.css", "/admin", "/admin.js", "/admin.css"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 {
 			t.Fatalf("static %s: %d", path, w.Code)
 		}
+	}
+}
+
+func TestAdminAPI(t *testing.T) {
+	ctx := context.Background()
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:16379"
+	}
+	r := redis.NewClient(&redis.Options{Addr: addr})
+	defer r.Close()
+	cfg := queue.DefaultConfig()
+	cfg.ActiveLimit = 1
+	q, err := queue.New(r, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := fmt.Sprintf("http-admin-%d", time.Now().UnixNano())
+	if err := q.InitEvent(ctx, event, 5); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		keys, _ := r.Keys(ctx, "vwr:{"+event+"}:*").Result()
+		if len(keys) > 0 {
+			r.Del(ctx, keys...)
+		}
+	}()
+	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), nil)
+	call := func(h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	assertCode := func(w *httptest.ResponseRecorder, n int) {
+		t.Helper()
+		if w.Code != n {
+			t.Fatalf("want %d got %d %s", n, w.Code, w.Body.String())
+		}
+	}
+
+	// Without ADMIN_TOKEN the admin API does not exist.
+	disabled := Handler(q, signer, []string{event}, "")
+	assertCode(call(disabled, "GET", "/admin/api/events", "", ""), 404)
+	assertCode(call(disabled, "GET", "/admin/api/events", "anything", ""), 404)
+
+	h := Handler(q, signer, []string{event}, "admin-secret")
+	assertCode(call(h, "GET", "/admin/api/events", "", ""), 401)
+	assertCode(call(h, "GET", "/admin/api/events", "wrong", ""), 401)
+	// A user session token must not unlock the admin API.
+	_, session, _ := signer.Session()
+	assertCode(call(h, "GET", "/admin/api/events", session, ""), 401)
+	assertCode(call(h, "GET", "/admin/api/events/other/active", "admin-secret", ""), 404)
+
+	for _, u := range []string{"first", "second"} {
+		if _, err := q.Join(ctx, event, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := q.Tick(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+
+	w := call(h, "GET", "/admin/api/events", "admin-secret", "")
+	assertCode(w, 200)
+	var list []struct {
+		ID          string `json:"id"`
+		ActiveLimit int    `json:"active_limit"`
+		queue.Stats
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != event || list[0].ActiveLimit != 1 || list[0].Active != 1 || list[0].Waiting != 1 || list[0].Remaining != 5 || list[0].Reserved != 0 {
+		t.Fatalf("events: %s", w.Body.String())
+	}
+
+	w = call(h, "GET", "/admin/api/events/"+event+"/active", "admin-secret", "")
+	assertCode(w, 200)
+	if !strings.Contains(w.Body.String(), `"users":["first"]`) || !strings.Contains(w.Body.String(), `"total":1`) {
+		t.Fatalf("active: %s", w.Body.String())
+	}
+
+	// Kicking the admitted user frees the slot for the next one in line.
+	assertCode(call(h, "POST", "/admin/api/events/"+event+"/kick", "admin-secret", `{}`), 400)
+	assertCode(call(h, "POST", "/admin/api/events/"+event+"/kick", "admin-secret", `{"user_id":"first"}`), 204)
+	if _, err := q.Tick(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := q.Status(ctx, event, "first"); v.Status != "absent" {
+		t.Fatalf("kicked user status %q", v.Status)
+	}
+	if v, _ := q.Status(ctx, event, "second"); v.Status != "admitted" {
+		t.Fatalf("next user status %q", v.Status)
 	}
 }

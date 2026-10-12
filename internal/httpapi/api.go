@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -23,7 +24,11 @@ func respond(w http.ResponseWriter, code int, v any) {
 func problem(w http.ResponseWriter, code int, message string) {
 	respond(w, code, map[string]string{"error": message})
 }
-func Handler(q *queue.Store, signer *auth.Signer, events []string) http.Handler {
+
+// Handler serves the user-facing queue API and pages. When adminToken is
+// non-empty it also serves the admin console at /admin, whose API requires
+// that token as a bearer credential; when empty the admin API is disabled.
+func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken string) http.Handler {
 	allowed := map[string]bool{}
 	for _, e := range events {
 		allowed[e] = true
@@ -31,6 +36,68 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string) http.Handler 
 	m := http.NewServeMux()
 	static, _ := fs.Sub(webFiles, "web")
 	m.Handle("GET /", http.FileServer(http.FS(static)))
+	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "admin.html")
+	})
+	admin := func(fn http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if adminToken == "" {
+				problem(w, 404, "admin disabled")
+				return
+			}
+			given := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(given), []byte(adminToken)) != 1 {
+				problem(w, 401, "admin password required")
+				return
+			}
+			if id := r.PathValue("id"); id != "" && !allowed[id] {
+				problem(w, 404, "unknown event")
+				return
+			}
+			fn(w, r)
+		}
+	}
+	m.HandleFunc("GET /admin/api/events", admin(func(w http.ResponseWriter, r *http.Request) {
+		type eventStats struct {
+			ID          string `json:"id"`
+			ActiveLimit int    `json:"active_limit"`
+			queue.Stats
+		}
+		out := make([]eventStats, 0, len(events))
+		for _, e := range events {
+			s, err := q.Stats(r.Context(), e)
+			if err != nil {
+				problem(w, 503, "queue unavailable")
+				return
+			}
+			out = append(out, eventStats{e, q.Config.ActiveLimit, s})
+		}
+		respond(w, 200, out)
+	}))
+	m.HandleFunc("GET /admin/api/events/{id}/active", admin(func(w http.ResponseWriter, r *http.Request) {
+		users, err := q.ActiveUsers(r.Context(), r.PathValue("id"))
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		total := len(users)
+		users = users[:min(total, 100)]
+		respond(w, 200, map[string]any{"total": total, "users": users})
+	}))
+	m.HandleFunc("POST /admin/api/events/{id}/kick", admin(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
+			problem(w, 400, "user_id required")
+			return
+		}
+		if err := q.Leave(r.Context(), r.PathValue("id"), body.UserID); err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		w.WriteHeader(204)
+	}))
 	m.HandleFunc("POST /session", func(w http.ResponseWriter, r *http.Request) {
 		id, token, err := signer.Session()
 		if err != nil {

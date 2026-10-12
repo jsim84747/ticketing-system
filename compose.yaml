@@ -19,6 +19,7 @@ services:
       HTTP_ADDR: "0.0.0.0:8080"
       REDIS_URL: "redis://redis:6379/0"
       TOKEN_SECRET: "${TOKEN_SECRET:?Set TOKEN_SECRET in .env to at least 32 random bytes}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
       ACTIVE_LIMIT: "${ACTIVE_LIMIT:-1000}"
       EVENT_IDS: "${EVENT_IDS:-demo}"
       EVENT_TICKETS: "${EVENT_TICKETS:-10000}"

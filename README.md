@@ -54,6 +54,13 @@ go run ./cmd/server
 
 Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event configuration, with only `HTTP_ADDR` set differently. In a persistent environment, store the secret securely instead of generating a new one on every restart.
 
+### User Page and Admin Page
+
+- **User page** (`/?event=demo`): the waiting room only. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
+- **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every 2 seconds. Admins can remove an admitted user, and the slot passes to the next user in line. It also links to a test user tab with the debug tools enabled.
+
+`demo.sh` generates an admin password in `.tools/demo-admin-token` and prints it on startup.
+
 ## Architecture
 
 ```mermaid
@@ -125,6 +132,11 @@ First, call `POST /session` to obtain `{user_id, session_token}`, then send `Aut
 | POST | `/events/{id}/queue/leave` | Idempotent departure, HTTP 204 |
 | POST | `/events/{id}/reserve` | Requires `X-Admission-Token`, returns reservation ID |
 | GET | `/healthz` | Redis connectivity status |
+| GET | `/admin/api/events` | Admin: per-event occupancy, queue length, inventory and wait metrics |
+| GET | `/admin/api/events/{id}/active` | Admin: admitted user IDs (first 100) and total |
+| POST | `/admin/api/events/{id}/kick` | Admin: `{"user_id": "..."}` removes a user so the next in line is admitted |
+
+Admin endpoints require `Authorization: Bearer <ADMIN_TOKEN>` and return 404 when `ADMIN_TOKEN` is not set.
 
 Example waiting response:
 
@@ -154,6 +166,7 @@ curl -X POST -H "Authorization: Bearer $SESSION" -H "X-Admission-Token: $ADMISSI
 | `WORKER_INTERVAL` | `1s` | Admission/cleanup interval on each server |
 | `TOKEN_SECRET` | None, required | HMAC key of at least 32 bytes, identical on all servers |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis address, supports authentication/TLS URLs |
+| `ADMIN_TOKEN` | None | Password for the admin console at `/admin`; the admin API is disabled when unset |
 | `HTTP_ADDR` | `127.0.0.1:8080` | HTTP bind address |
 | `EVENT_IDS` | `demo` | Allowed event IDs, comma-separated |
 | `EVENT_TICKETS` | `10000` | Ticket count when an event is first registered; not reset on restart |

@@ -2,11 +2,13 @@
 const $ = id => document.getElementById(id);
 const eventID = new URLSearchParams(location.search).get('event') || 'demo';
 const useSSE = new URLSearchParams(location.search).get('transport') === 'sse';
-$('mode').href = `/?event=${encodeURIComponent(eventID)}${useSSE ? '' : '&transport=sse'}`;
+// Test tools are for developers; the admin console links here with ?debug=1.
+$('testing').hidden = new URLSearchParams(location.search).get('debug') !== '1';
+$('mode').href = `/?event=${encodeURIComponent(eventID)}${useSSE ? '' : '&transport=sse'}${location.search.includes('debug=1') ? '&debug=1' : ''}`;
 $('mode').textContent = useSSE ? '폴링 모드' : 'SSE 모드';
 const base = `/events/${encodeURIComponent(eventID)}`;
 $('event-id').textContent = eventID;
-$('new-tab').href = `/?event=${encodeURIComponent(eventID)}`;
+$('new-tab').href = `/?event=${encodeURIComponent(eventID)}&debug=1`;
 let session = sessionStorage.getItem('session'), state = 'absent', admission = '', busy = false;
 let initial = Number(sessionStorage.getItem(`initial:${eventID}`)) || 0;
 let pollTimer, beatTimer, revision = 0;

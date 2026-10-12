@@ -13,6 +13,10 @@ if [ ! -f .tools/demo-secret ]; then
   (umask 077; openssl rand -hex 32 > .tools/demo-secret)
 fi
 export TOKEN_SECRET="${TOKEN_SECRET:-$(cat .tools/demo-secret)}"
+if [ ! -f .tools/demo-admin-token ]; then
+  (umask 077; openssl rand -hex 8 > .tools/demo-admin-token)
+fi
+export ADMIN_TOKEN="${ADMIN_TOKEN:-$(cat .tools/demo-admin-token)}"
 export ACTIVE_LIMIT="${ACTIVE_LIMIT:-2}"
 # Use a separate event for each demo capacity, so config mismatch fails safely.
 export EVENT_IDS="${EVENT_IDS:-demo-$ACTIVE_LIMIT}"
@@ -28,5 +32,6 @@ if [ "$REDIS_URL" = redis://127.0.0.1:16380/0 ]; then
   sleep 1
   if ! kill -0 "$redis_pid" 2>/dev/null; then echo 'Could not start Redis. See .tools/demo-redis.log' >&2; exit 1; fi
 fi
-echo "Open http://${HTTP_ADDR:-127.0.0.1:8080}/?event=${EVENT_IDS%%,*} (capacity $ACTIVE_LIMIT)"
+echo "User page:  http://${HTTP_ADDR:-127.0.0.1:8080}/?event=${EVENT_IDS%%,*} (capacity $ACTIVE_LIMIT)"
+echo "Admin page: http://${HTTP_ADDR:-127.0.0.1:8080}/admin (password: $ADMIN_TOKEN)"
 scripts/go-local.sh run ./cmd/server

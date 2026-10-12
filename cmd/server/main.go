@@ -64,6 +64,10 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	if adminToken == "" {
+		log.Print("ADMIN_TOKEN not set: admin console disabled")
+	}
 	interval := duration("WORKER_INTERVAL", "1s")
 	if interval <= 0 {
 		log.Fatal("WORKER_INTERVAL must be positive")
@@ -73,7 +77,7 @@ func main() {
 		defer close(workerDone)
 		q.RunWorker(ctx, events, interval, func(err error) { log.Printf("worker: %v", err) })
 	}()
-	srv := &http.Server{Addr: env("HTTP_ADDR", "127.0.0.1:8080"), Handler: httpapi.Handler(q, signer, events), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	srv := &http.Server{Addr: env("HTTP_ADDR", "127.0.0.1:8080"), Handler: httpapi.Handler(q, signer, events, adminToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)

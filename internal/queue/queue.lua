@@ -14,7 +14,8 @@ if action == 'stats' then
   local function metric(name) return tonumber(redis.call('HGET',metrics,name) or '0') end
   return cjson.encode({active=redis.call('ZCARD',active),waiting=redis.call('ZCARD',waiting),
     admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
-    wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms')})
+    wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms'),
+    remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations)})
 end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)

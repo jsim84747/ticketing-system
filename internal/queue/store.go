@@ -165,6 +165,8 @@ type Stats struct {
 	OrderViolations int64 `json:"order_violations"`
 	WaitTotalMS     int64 `json:"wait_total_ms"`
 	WaitMaxMS       int64 `json:"wait_max_ms"`
+	Remaining       int64 `json:"remaining"`
+	Reserved        int64 `json:"reserved"`
 }
 
 func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {

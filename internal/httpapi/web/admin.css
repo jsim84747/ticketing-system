@@ -1,0 +1,29 @@
+.admin{display:block;max-width:1000px;padding-top:48px}
+.login{max-width:440px;margin:40px auto;min-height:0}
+.login form{display:flex;flex-direction:column;gap:14px}
+.login .caption{margin:28px 0 0}
+.login input{font:inherit;font-size:15px;padding:14px;border:1px solid #dce4d5;border-radius:10px;background:#fbfcf9}
+.admin-message{font-size:12px;color:#8a4b3a;min-height:1em;margin:14px 0 0}
+#users-empty{color:#7a867d}
+.toolbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:13px;margin-bottom:22px}
+.toolbar label{display:flex;align-items:center;gap:8px;font-weight:650}
+.toolbar select{font:inherit;padding:8px 10px;border:1px solid #dce4d5;border-radius:8px;background:#fff}
+.toolbar a{color:#335638;white-space:nowrap}
+.toolbar .updated{margin-left:auto;color:#7a867d;font-size:11px}
+.toolbar .secondary{width:auto;padding:8px 14px}
+.capacity{min-height:0}
+.capacity .caption{margin-top:0}
+.capacity .number{margin-bottom:20px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}
+.card{background:#fff;border:1px solid #dfe6da;border-radius:14px;padding:18px 20px}
+.card span{display:block;color:#798679;font-size:11px}
+.card strong{display:block;font-size:22px;margin-top:10px;font-weight:650;font-variant-numeric:tabular-nums}
+.card.alert strong{color:#a33a24}
+.users{min-height:0}
+.users-count{margin-left:auto;color:#7a867d;font-size:11px;font-weight:400}
+.users table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.users th{text-align:left;color:#798679;font-weight:400;font-size:11px;padding:12px 0}
+.users td{border-top:1px solid #edf0e8;padding:10px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.users td:last-child{text-align:right;width:90px}
+.users td button{border:1px solid #e3cfc6;border-radius:7px;background:#fff;color:#8a4b3a;padding:6px 10px;font-size:11px}
+@media(max-width:860px){.admin{padding:24px}.cards{grid-template-columns:repeat(2,1fr)}.toolbar .updated{margin-left:0;width:100%}}
