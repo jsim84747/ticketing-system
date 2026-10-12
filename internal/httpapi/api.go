@@ -31,23 +31,53 @@ func problem(w http.ResponseWriter, code int, message string) {
 // Handler serves the user-facing queue API and pages. When adminToken is
 // non-empty it also serves the admin console at /admin, whose API requires
 // that token as a bearer credential; when empty the admin API is disabled.
+// Handler serves the user-facing queue API and pages. Events are the ones in
+// the Redis registry (managed from the admin page) plus any passed in events,
+// which tests and the load harness use without registering them.
 func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken string) http.Handler {
 	allowed := map[string]bool{}
 	for _, e := range events {
 		allowed[e] = true
 	}
+	known := func(r *http.Request, event string) bool {
+		if allowed[event] {
+			return true
+		}
+		ok, _ := q.HasEvent(r.Context(), event)
+		return ok
+	}
+	// listEvents is the passed-in events followed by registered ones.
+	listEvents := func(r *http.Request) ([]string, error) {
+		registered, err := q.Events(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		out := append([]string{}, events...)
+		for _, e := range registered {
+			if !allowed[e] {
+				out = append(out, e)
+			}
+		}
+		return out, nil
+	}
+	defaultEvent := func(r *http.Request) string {
+		if def, err := q.DefaultEvent(r.Context()); err == nil && def != "" {
+			return def
+		}
+		if len(events) > 0 {
+			return events[0]
+		}
+		return ""
+	}
 	m := http.NewServeMux()
 	static, _ := fs.Sub(webFiles, "web")
 	m.Handle("GET /", http.FileServer(http.FS(static)))
-	// The bare root serves the first configured event, so the shareable link
-	// needs no ?event= query. Other events stay reachable with ?event=<id>.
+	// The bare root serves the main event, so the shareable link needs no
+	// ?event= query. Other events stay reachable with ?event=<id>.
 	page, _ := fs.ReadFile(static, "index.html")
-	if len(events) > 0 {
-		page = []byte(strings.Replace(string(page), `<html lang="en">`, `<html lang="en" data-event="`+html.EscapeString(events[0])+`">`, 1))
-	}
 	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(page)
+		w.Write([]byte(strings.Replace(string(page), `<html lang="en">`, `<html lang="en" data-event="`+html.EscapeString(defaultEvent(r))+`">`, 1)))
 	})
 	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, static, "admin.html")
@@ -63,7 +93,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 				problem(w, 401, "admin password required")
 				return
 			}
-			if id := r.PathValue("id"); id != "" && !allowed[id] {
+			if id := r.PathValue("id"); id != "" && !known(r, id) {
 				problem(w, 404, "unknown event")
 				return
 			}
@@ -72,19 +102,94 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 	}
 	m.HandleFunc("GET /admin/api/events", admin(func(w http.ResponseWriter, r *http.Request) {
 		type eventStats struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Default bool   `json:"default"`
 			queue.Stats
 		}
-		out := make([]eventStats, 0, len(events))
-		for _, e := range events {
+		list, err := listEvents(r)
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		def := defaultEvent(r)
+		out := make([]eventStats, 0, len(list))
+		for _, e := range list {
 			s, err := q.Stats(r.Context(), e)
 			if err != nil {
 				problem(w, 503, "queue unavailable")
 				return
 			}
-			out = append(out, eventStats{e, s})
+			out = append(out, eventStats{e, e == def, s})
 		}
 		respond(w, 200, out)
+	}))
+	m.HandleFunc("POST /admin/api/events", admin(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Tickets     int    `json:"tickets"`
+			ActiveLimit int    `json:"active_limit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			problem(w, 400, "invalid event")
+			return
+		}
+		if body.Tickets < 0 || body.Tickets > 10000000 {
+			problem(w, 400, "tickets must be between 0 and 10000000")
+			return
+		}
+		settings := queue.Settings{Name: &body.Name}
+		if body.ActiveLimit != 0 {
+			settings.ActiveLimit = &body.ActiveLimit
+		}
+		if err := settings.Validate(); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
+		switch err := q.CreateEvent(r.Context(), body.ID, body.Tickets); {
+		case errors.Is(err, queue.ErrInvalidEvent):
+			problem(w, 400, err.Error())
+			return
+		case errors.Is(err, queue.ErrEventExists):
+			problem(w, 409, err.Error())
+			return
+		case err != nil:
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		if err := q.UpdateSettings(r.Context(), body.ID, settings); err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		respond(w, 201, map[string]string{"id": body.ID})
+	}))
+	m.HandleFunc("DELETE /admin/api/events/{id}", admin(func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if allowed[id] {
+			problem(w, 400, "this event is built into the server and cannot be deleted")
+			return
+		}
+		list, err := listEvents(r)
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		if len(list) <= 1 {
+			problem(w, 400, "keep at least one event")
+			return
+		}
+		if err := q.DeleteEvent(r.Context(), id); err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	m.HandleFunc("POST /admin/api/events/{id}/default", admin(func(w http.ResponseWriter, r *http.Request) {
+		if err := q.SetDefaultEvent(r.Context(), r.PathValue("id")); err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		w.WriteHeader(204)
 	}))
 	m.HandleFunc("GET /admin/api/events/{id}/active", admin(func(w http.ResponseWriter, r *http.Request) {
 		users, err := q.ActiveUsers(r.Context(), r.PathValue("id"))
@@ -215,7 +320,7 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 	protect := func(fn func(http.ResponseWriter, *http.Request, string, string)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			event := r.PathValue("id")
-			if !allowed[event] {
+			if !known(r, event) {
 				problem(w, 404, "unknown event")
 				return
 			}

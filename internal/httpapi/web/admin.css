@@ -61,3 +61,12 @@
 .scheduled strong{font-size:20px;color:#5a3a12}
 .scheduled small{font-size:12px;color:#8a6a3f;margin-bottom:6px}
 @media(max-width:860px){.panels{grid-template-columns:1fr}}
+
+.toolbar .secondary.danger{color:#8a4b3a;border-color:#e3cfc6}
+.create-event{margin-bottom:18px}
+.create-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.create-actions{display:flex;gap:12px}
+.create-actions .primary{flex:1}.create-actions .secondary{width:auto;padding:12px 20px}
+.panel textarea{font:inherit;font-size:14px;padding:12px;border:1px solid #dce4d5;border-radius:10px;background:#fbfcf9;color:#172623;resize:vertical}
+#event-message:empty{display:none}
+@media(max-width:860px){.create-grid{grid-template-columns:1fr}}

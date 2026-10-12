@@ -71,6 +71,8 @@ Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event con
 - **User page** (`/`): the waiting room only. The root URL opens the first event in `EVENT_IDS`; other events are reachable with `/?event=<id>`. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
 - **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every second. Admins can remove one admitted user, or all of them at once with Remove all, and the slots pass to the next users in line. It also links to a test user tab with the debug tools enabled.
 - **Reservations**: the purchase form asks for first name, last name and email. They are validated on the server and saved with the reservation in the same atomic step that takes the ticket, so invalid details never use up a ticket. The admin page lists reservations, lets the admin correct a reservation's name or contact detail (the ticket, number and time stay the same; unlike the purchase form, the admin may save any text as the email, or leave it empty) or delete a reservation, which returns its ticket to the remaining count, and can download them as CSV (fields that a spreadsheet would treat as formulas are escaped). This is personal data: it lives only in Redis, which the demo stores under `.tools/` (not committed to Git).
+- **Events**: the admin page creates and deletes events (each with its own line, inventory, settings and reservations), shows them by name, and picks the main event that the root URL opens. Other events are reachable at `/?event=<id>`. Events live in a Redis registry; `EVENT_IDS` only seeds it on first start, so a deleted event does not come back on restart. Deleting an event removes everything stored for it; the last event cannot be deleted.
+- **Event details**: date and time, venue and a description, shown to visitors on the event row and under the headline.
 - **Event settings**: the admin page edits the ticket name shown to users, the sale status badge (Open, Closed, or custom text up to 40 characters; display only, it does not stop people joining), the maximum number of concurrent users, and the remaining ticket count. Changes apply immediately on every server. Lowering the limit never evicts anyone; admission pauses until occupancy falls below the new limit.
 - **Auto and manual mode**: in auto mode the worker admits the next user whenever a spot opens. In manual mode the worker still expires stale and overstayed users but admits no one; the admin admits the next N users with a button, still in FIFO order and capped by the limit. Users in manual mode see "Set by organizer" instead of an estimated wait.
 - **Locked join button**: when scheduling an opening the admin chooses between letting people line up early and locking the join button. Locked, the button is greyed out with a countdown and unlocks at the opening second, like a real ticket sale; joining earlier is refused by the server (409 "not open yet"). The countdown follows the server clock, sent with every status response, so a visitor whose device clock is wrong cannot click early.
@@ -151,12 +153,15 @@ First, call `POST /session` to obtain `{user_id, session_token}`, then send `Aut
 | POST | `/events/{id}/queue/leave` | Idempotent departure, HTTP 204 |
 | POST | `/events/{id}/reserve` | Requires `X-Admission-Token` and `{"first_name", "last_name", "email", "quantity"}` (quantity defaults to 1); returns the reservation ID and details |
 | GET | `/healthz` | Redis connectivity status |
+| POST | `/admin/api/events` | Admin: `{"id", "name", "tickets", "active_limit"}` creates an event (409 if the ID exists) |
+| DELETE | `/admin/api/events/{id}` | Admin: deletes an event and all its data |
+| POST | `/admin/api/events/{id}/default` | Admin: makes it the main event opened by `/` |
 | GET | `/admin/api/events` | Admin: per-event occupancy, queue length, inventory and wait metrics |
 | GET | `/admin/api/events/{id}/active` | Admin: admitted user IDs (first 100) and total |
 | GET | `/admin/api/events/{id}/reservations` | Admin: reservations with name, email and time, newest first; `?limit=N` returns only the newest N |
 | PUT | `/admin/api/events/{id}/reservations/{user_id}` | Admin: `{"first_name", "last_name", "email"}` corrects a reservation's details (email is free text here) |
 | DELETE | `/admin/api/events/{id}/reservations/{user_id}` | Admin: cancels a reservation and returns its ticket |
-| POST | `/admin/api/events/{id}/settings` | Admin: any of `{"name", "badge", "active_limit", "remaining", "mode": "auto" \| "manual", "open_at": <unix ms, 0 cancels>, "join_lock", "max_per_order"}` |
+| POST | `/admin/api/events/{id}/settings` | Admin: any of `{"name", "badge", "starts_at", "venue", "description", "active_limit", "remaining", "mode": "auto" \| "manual", "open_at": <unix ms, 0 cancels>, "join_lock", "max_per_order"}` |
 | POST | `/admin/api/events/{id}/admit` | Admin: `{"count": N}` admits up to N users from the front of the queue (1–1000) |
 | POST | `/admin/api/events/{id}/kick-all` | Admin: removes every admitted user; returns `{"removed": N}` |
 | POST | `/admin/api/events/{id}/kick` | Admin: `{"user_id": "..."}` removes a user so the next in line is admitted |
@@ -193,7 +198,7 @@ curl -X POST -H "Authorization: Bearer $SESSION" -H "X-Admission-Token: $ADMISSI
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis address, supports authentication/TLS URLs |
 | `ADMIN_TOKEN` | None | Password for the admin console at `/admin`; the admin API is disabled when unset |
 | `HTTP_ADDR` | `127.0.0.1:8080` | HTTP bind address; if unset and `PORT` is set, `0.0.0.0:$PORT` |
-| `EVENT_IDS` | `demo` | Allowed event IDs, comma-separated |
+| `EVENT_IDS` | `demo` | Events created on first start, comma-separated; afterwards manage events from the admin page |
 | `EVENT_TICKETS` | `10000` | Ticket count when an event is first registered; not reset on restart |
 
 The browser heartbeat interval is 10 seconds. To set a timeout shorter than this, you must also adjust the frontend interval.

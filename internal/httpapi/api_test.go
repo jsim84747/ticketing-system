@@ -542,3 +542,80 @@ func TestTicketQuantities(t *testing.T) {
 		t.Fatalf("reserve 1: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestEventManagement(t *testing.T) {
+	ctx := context.Background()
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:16379"
+	}
+	r := redis.NewClient(&redis.Options{Addr: addr})
+	defer r.Close()
+	q, _ := queue.New(r, queue.DefaultConfig(), nil)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+	first, second := "evt-a-"+suffix, "evt-b-"+suffix
+	defer func() { q.DeleteEvent(ctx, first); q.DeleteEvent(ctx, second) }()
+	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), nil)
+	h := Handler(q, signer, nil, "admin-secret")
+	call := func(method, path, bearer, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	if w := call("POST", "/admin/api/events", "wrong", `{"id":"`+first+`"}`); w.Code != 401 {
+		t.Fatalf("create without admin password: %d", w.Code)
+	}
+	if w := call("POST", "/admin/api/events", "admin-secret", `{"id":"bad id!","tickets":5}`); w.Code != 400 {
+		t.Fatalf("invalid ID: %d", w.Code)
+	}
+	if w := call("POST", "/admin/api/events", "admin-secret", `{"id":"`+first+`","name":"Concert A","tickets":50,"active_limit":5}`); w.Code != 201 {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("POST", "/admin/api/events", "admin-secret", `{"id":"`+first+`","tickets":1}`); w.Code != 409 {
+		t.Fatalf("duplicate: %d", w.Code)
+	}
+	call("POST", "/admin/api/events", "admin-secret", `{"id":"`+second+`","name":"Concert B","tickets":7}`)
+	w := call("GET", "/admin/api/events", "admin-secret", "")
+	for _, want := range []string{`"id":"` + first + `"`, `"name":"Concert A"`, `"remaining":50`, `"active_limit":5`, `"id":"` + second + `"`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("events missing %s: %s", want, w.Body.String())
+		}
+	}
+	// A new event is open to visitors right away.
+	_, session, _ := signer.Session()
+	if w := call("POST", "/events/"+second+"/queue", session, ""); w.Code != 200 {
+		t.Fatalf("join new event: %d %s", w.Code, w.Body.String())
+	}
+	// Event details reach visitors.
+	if w := call("POST", "/admin/api/events/"+second+"/settings", "admin-secret", `{"venue":"Main Hall","description":"Doors at 7","starts_at":1800000000000}`); w.Code != 204 {
+		t.Fatalf("details: %d %s", w.Code, w.Body.String())
+	}
+	st := call("GET", "/events/"+second+"/queue/status", session, "").Body.String()
+	for _, want := range []string{`"venue":"Main Hall"`, `"description":"Doors at 7"`, `"starts_at":1800000000000`} {
+		if !strings.Contains(st, want) {
+			t.Fatalf("status missing %s: %s", want, st)
+		}
+	}
+	// The main event decides what the root URL opens.
+	if w := call("POST", "/admin/api/events/"+second+"/default", "admin-secret", ""); w.Code != 204 {
+		t.Fatalf("set default: %d", w.Code)
+	}
+	if body := call("GET", "/", "", "").Body.String(); !strings.Contains(body, `data-event="`+second+`"`) {
+		t.Fatalf("root does not open the main event")
+	}
+	// Deleting removes the event and everything stored for it.
+	if w := call("DELETE", "/admin/api/events/"+second, "admin-secret", ""); w.Code != 204 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("POST", "/events/"+second+"/queue", session, ""); w.Code != 404 {
+		t.Fatalf("deleted event still open: %d", w.Code)
+	}
+	if n, _ := r.Exists(ctx, "vwr:{"+second+"}:waiting", "vwr:{"+second+"}:stock").Result(); n != 0 {
+		t.Fatalf("deleted event left %d keys behind", n)
+	}
+	if def, _ := q.DefaultEvent(ctx); def == second {
+		t.Fatal("deleted event is still the main event")
+	}
+}

@@ -23,11 +23,27 @@
 <section id="dashboard" hidden>
 <div class="toolbar">
 <label>Event <select id="event"></select></label>
+<button id="new-event" class="secondary" type="button">+ New event</button>
+<button id="make-main" class="secondary" type="button">Make main event</button>
+<button id="delete-event" class="secondary danger" type="button">Delete event</button>
 <a id="user-page" target="_blank" rel="noopener noreferrer">User page ↗</a>
 <a id="test-page" target="_blank" rel="noopener noreferrer">Test user tab ↗</a>
 <span id="updated" class="updated">Loading</span>
 <button id="logout" class="secondary">Sign out</button>
 </div>
+
+<form id="create-event" class="room panel create-event" hidden>
+<div class="room-top"><span class="live-dot"></span><span>New event</span></div>
+<div class="create-grid">
+<label>Event name<input id="new-name" type="text" maxlength="80" placeholder="Spring Concert" required></label>
+<label>Event ID (used in links)<input id="new-id" type="text" maxlength="64" pattern="[A-Za-z0-9_-]+" placeholder="spring-concert" required></label>
+<label>Tickets<input id="new-tickets" type="number" min="0" max="10000000" value="100" required></label>
+<label>Max concurrent users<input id="new-limit" type="number" min="1" max="100000" value="1000" required></label>
+</div>
+<div class="create-actions"><button class="primary" type="submit">Create event <span>→</span></button><button id="cancel-create" class="secondary" type="button">Cancel</button></div>
+<p id="create-message" class="admin-message" role="status" aria-live="polite"></p>
+</form>
+<p id="event-message" class="admin-message" role="status" aria-live="polite"></p>
 
 <div class="room capacity">
 <div class="capacity-top"><p class="caption">Admitted right now</p><span id="mode-badge" class="mode-badge">AUTO</span></div>
@@ -40,6 +56,9 @@
 <form id="settings" class="room panel">
 <div class="room-top"><span class="live-dot"></span><span>Event settings</span></div>
 <label>Ticket name<input id="set-name" type="text" maxlength="80" placeholder="The Next Stage"></label>
+<label>Event date &amp; time<input id="set-starts" type="datetime-local"></label>
+<label>Venue<input id="set-venue" type="text" maxlength="100" placeholder="e.g. Madison Square Garden"></label>
+<label>Description<textarea id="set-description" maxlength="500" rows="3" placeholder="Shown to visitors under the headline"></textarea></label>
 <fieldset class="badge-field"><legend>Sale status (shown to visitors)</legend>
 <div class="segmented three" role="radiogroup" aria-label="Sale status">
 <button type="button" role="radio" data-badge="Open" aria-checked="true">Open</button>

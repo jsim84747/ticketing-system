@@ -48,6 +48,13 @@ setInterval(() => {
 }, 250);
 const tickets = n => `${n} ticket${n === 1 ? '' : 's'}`;
 function updateQuantityLabel() { $('qty-label').textContent = tickets(Number($('quantity').value) || 1); }
+// Event date, venue and description from the admin page; defaults stay when unset.
+const defaultSub = $('sub').innerHTML;
+function renderDetails(v) {
+  const when = v.starts_at ? new Date(v.starts_at).toLocaleString('en-US', {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'}) : '';
+  $('event-meta').textContent = [when, v.venue].filter(Boolean).join(' · ') || 'Online ticket sale';
+  if (v.description) $('sub').textContent = v.description; else $('sub').innerHTML = defaultSub;
+}
 function render(v) {
   state = v.status; admission = v.token || '';
   if (v.mode) { mode = v.mode; openAt = v.open_at || 0; joinLock = !!v.join_lock; }
@@ -65,7 +72,8 @@ function render(v) {
     $('quantity').value = String(keep); updateQuantityLabel();
   }
   $('connection').textContent = 'Live';
-  if (v.name) document.querySelectorAll('.ticket-name').forEach(el => { el.textContent = v.name; });
+  if (v.name) { document.querySelectorAll('.ticket-name').forEach(el => { el.textContent = v.name; }); $('event-icon').textContent = v.name.trim().charAt(0).toUpperCase() || 'T'; }
+  if (v.mode) renderDetails(v);
   if (v.mode) { $('badge').textContent = v.badge || 'Open'; $('badge').classList.toggle('closed', v.badge === 'Closed'); }
   $('waiting-view').hidden = state === 'admitted' || state === 'completed';
   $('purchase-view').hidden = state !== 'admitted'; $('complete-view').hidden = state !== 'completed';

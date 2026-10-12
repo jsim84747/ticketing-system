@@ -20,6 +20,10 @@ local mode = redis.call('HGET',config,'mode')
 local name = redis.call('HGET',config,'name') or ''
 -- Sale status badge shown to visitors ("Open", "Closed" or custom text).
 local badge = redis.call('HGET',config,'badge') or ''
+-- Event details shown to visitors.
+local startsAt = tonumber(redis.call('HGET',config,'starts_at') or '0')
+local venue = redis.call('HGET',config,'venue') or ''
+local description = redis.call('HGET',config,'description') or ''
 -- Scheduled opening (unix ms, 0 = none): in manual mode users can line up early
 -- and the first tick at or after open_at switches the event to auto admission.
 local openAt = tonumber(redis.call('HGET',config,'open_at') or '0')
@@ -34,7 +38,8 @@ if action == 'stats' then
     admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
     wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms'),
     remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations),
-    active_limit=limit,mode=mode,name=name,open_at=openAt,badge=badge,join_lock=joinLock,max_per_order=maxPerOrder})
+    active_limit=limit,mode=mode,name=name,open_at=openAt,badge=badge,join_lock=joinLock,max_per_order=maxPerOrder,
+    starts_at=startsAt,venue=venue,description=description})
 end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)
@@ -199,6 +204,7 @@ local function encode(v)
   v.name = name; v.mode = mode; v.open_at = openAt; v.badge = badge; v.join_lock = joinLock; v.now = now
   v.max_per_order = maxPerOrder; v.in_line = redis.call('ZCARD',waiting); v.inside = redis.call('ZCARD',active)
   v.remaining = tonumber(redis.call('GET',stock) or '0')
+  v.starts_at = startsAt; v.venue = venue; v.description = description
   return cjson.encode(v)
 end
 local function status()

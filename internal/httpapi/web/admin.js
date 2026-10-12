@@ -23,6 +23,7 @@ function fillSettings(e, force) {
   if (!force && $('settings').contains(document.activeElement)) return;
   if (!force && shownEvent === e.id) return;
   shownEvent = e.id;
+  $('set-starts').value = e.starts_at ? localInput(new Date(e.starts_at)) : ''; $('set-venue').value = e.venue || ''; $('set-description').value = e.description || '';
   $('set-name').value = e.name; $('set-limit').value = e.active_limit; $('set-remaining').value = e.remaining; $('set-per-order').value = e.max_per_order;
   const preset = ['', 'Open', 'Closed'].includes(e.badge);
   setBadgeChoice(preset ? (e.badge || 'Open') : 'other'); $('set-badge').value = preset ? '' : e.badge;
@@ -86,10 +87,17 @@ function renderEvents(list) {
   const before = selected();
   if ($('event').options.length !== list.length) {
     $('event').replaceChildren(...list.map(e => new Option(e.id, e.id)));
-    if (before) $('event').value = before;
+    if (before && list.some(e => e.id === before)) $('event').value = before;
+  }
+  // Show names, mark the main event; refresh labels every round since names change.
+  for (const opt of $('event').options) {
+    const ev = list.find(x => x.id === opt.value);
+    if (ev) opt.textContent = `${ev.name || ev.id}${ev.name ? ` (${ev.id})` : ''}${ev.default ? ' ★ main' : ''}`;
   }
   const e = current();
   if (!e) return;
+  $('make-main').hidden = e.default;
+  $('delete-event').disabled = list.length <= 1; $('delete-event').title = list.length <= 1 ? 'Keep at least one event' : '';
   const usage = e.active_limit ? Math.min(100, e.active / e.active_limit * 100) : 0;
   $('active').textContent = num(e.active); $('limit').textContent = `/ ${num(e.active_limit)} people`;
   $('usage').value = usage; $('usage-text').textContent = `${Math.floor(usage)}%`;
@@ -197,7 +205,8 @@ $('settings').onsubmit = async e => {
   e.preventDefault();
   const badge = badgeChoice === 'other' ? $('set-badge').value.trim() : badgeChoice;
   if (!badge) { flash('settings-message', 'Type a sale status, or pick Open or Closed.', false); return; }
-  const body = {name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value), max_per_order: Number($('set-per-order').value), badge};
+  const starts = $('set-starts').value ? new Date($('set-starts').value).getTime() : 0;
+  const body = {starts_at: starts, venue: $('set-venue').value.trim(), description: $('set-description').value.trim(), name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value), max_per_order: Number($('set-per-order').value), badge};
   try { await post('settings', body); flash('settings-message', 'Settings saved.'); shownEvent = ''; document.activeElement.blur(); refresh(); }
   catch (err) { flash('settings-message', `Couldn't save: ${err.message}`, false); }
 };
@@ -241,5 +250,34 @@ $('kick-all').onclick = async () => {
   try { const v = await post('kick-all'); flash('users-message', `Removed ${v.removed} ${v.removed === 1 ? 'user' : 'users'}. Their spots went to the next people in line.`); refresh(); }
   catch (err) { flash('users-message', `Couldn't remove users: ${err.message}`, false); }
   finally { $('kick-all').disabled = false; }
+};
+// ---- Event management ----
+const slug = s => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+let idTouched = false;
+$('new-event').onclick = () => { $('create-event').hidden = false; idTouched = false; $('create-message').textContent = ''; $('new-name').focus(); };
+$('cancel-create').onclick = () => { $('create-event').hidden = true; };
+$('new-name').oninput = () => { if (!idTouched) $('new-id').value = slug($('new-name').value); };
+$('new-id').oninput = () => { idTouched = true; };
+$('create-event').onsubmit = async e => {
+  e.preventDefault();
+  const id = $('new-id').value.trim();
+  try {
+    await api('/admin/api/events', 'POST', {id, name: $('new-name').value.trim(), tickets: Number($('new-tickets').value), active_limit: Number($('new-limit').value)});
+    $('create-event').hidden = true; $('create-event').reset();
+    await refresh(); $('event').value = id; shownEvent = ''; editing = ''; refresh();
+    flash('event-message', `Created "${id}". Its visitor link is ${location.origin}/?event=${id}`);
+  } catch (err) { flash('create-message', `Couldn't create: ${err.message}`, false); }
+};
+$('make-main').onclick = async () => {
+  const id = selected();
+  try { await post('default'); flash('event-message', `"${id}" is now the main event; ${location.origin}/ opens it.`); refresh(); }
+  catch (err) { flash('event-message', `Couldn't change the main event: ${err.message}`, false); }
+};
+$('delete-event').onclick = async () => {
+  const e = current(); if (!e) return;
+  const label = e.name || e.id;
+  if (!confirm(`Delete "${label}" and everything in it: its line, ${num(e.reserved)} reservations and settings? This can't be undone.`)) return;
+  try { await api(`/admin/api/events/${encodeURIComponent(e.id)}`, 'DELETE'); $('event').value = ''; shownEvent = ''; editing = ''; flash('event-message', `Deleted "${label}".`); refresh(); }
+  catch (err) { flash('event-message', `Couldn't delete: ${err.message}`, false); }
 };
 if (token) show();

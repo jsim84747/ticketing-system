@@ -71,10 +71,10 @@ func main() {
 	events := strings.Split(env("EVENT_IDS", "demo"), ",")
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	for _, event := range events {
-		if err := q.InitEvent(ctx, event, integer("EVENT_TICKETS", 10000)); err != nil {
-			log.Fatal(err)
-		}
+	// EVENT_IDS only seeds the registry the first time; after that events are
+	// created and deleted from the admin page.
+	if err := q.SeedEvents(ctx, events, integer("EVENT_TICKETS", 10000)); err != nil {
+		log.Fatal(err)
 	}
 	adminToken := os.Getenv("ADMIN_TOKEN")
 	if adminToken == "" {
@@ -87,9 +87,9 @@ func main() {
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		q.RunWorker(ctx, events, interval, func(err error) { log.Printf("worker: %v", err) })
+		q.RunWorkerFor(ctx, q.Events, interval, func(err error) { log.Printf("worker: %v", err) })
 	}()
-	srv := &http.Server{Addr: listenAddr(), Handler: httpapi.Handler(q, signer, events, adminToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	srv := &http.Server{Addr: listenAddr(), Handler: httpapi.Handler(q, signer, nil, adminToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
