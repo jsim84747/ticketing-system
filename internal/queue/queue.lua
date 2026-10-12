@@ -10,6 +10,12 @@ local limit, timeout, maxstay = tonumber(ARGV[4]), tonumber(ARGV[5]), tonumber(A
 local signature = ARGV[4] .. ':' .. ARGV[5] .. ':' .. ARGV[6]
 redis.call('HSETNX',config,'signature',signature)
 if redis.call('HGET',config,'signature') ~= signature then return redis.error_reply('CONFIG_MISMATCH') end
+if action == 'stats' then
+  local function metric(name) return tonumber(redis.call('HGET',metrics,name) or '0') end
+  return cjson.encode({active=redis.call('ZCARD',active),waiting=redis.call('ZCARD',waiting),
+    admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
+    wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms')})
+end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)
   if since then
@@ -50,7 +56,7 @@ if action == 'tick' then
       redis.call('ZADD',active,now,id)
       redis.call('ZADD',started,now,id)
       redis.call('HSET',generation,id,string.format('%.0f',score))
-      local wait = now-tonumber(redis.call('HGET',joined,id))
+      local wait = math.max(0,now-tonumber(redis.call('HGET',joined,id)))
       redis.call('HDEL',joined,id)
       redis.call('HINCRBY',metrics,'admissions',1)
       redis.call('HINCRBY',metrics,'wait_total_ms',wait)

@@ -154,3 +154,31 @@ func (s *Store) Reserve(ctx context.Context, event, user, generation, id string)
 	err = json.Unmarshal([]byte(raw), &v)
 	return v, err
 }
+
+// Stats is read atomically; peak and FIFO violations are recorded at admission,
+// not sampled, so even transient breaches are observable by the load harness.
+type Stats struct {
+	Active          int64 `json:"active"`
+	Waiting         int64 `json:"waiting"`
+	Admissions      int64 `json:"admissions"`
+	PeakActive      int64 `json:"peak_active"`
+	OrderViolations int64 `json:"order_violations"`
+	WaitTotalMS     int64 `json:"wait_total_ms"`
+	WaitMaxMS       int64 `json:"wait_max_ms"`
+}
+
+func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {
+	raw, err := s.run(ctx, event, "stats", "")
+	if err != nil {
+		return Stats{}, err
+	}
+	var v Stats
+	err = json.Unmarshal([]byte(raw), &v)
+	return v, err
+}
+func (s *Store) ActiveUsers(ctx context.Context, event string) ([]string, error) {
+	if !eventPattern.MatchString(event) {
+		return nil, fmt.Errorf("invalid event")
+	}
+	return s.Client.ZRange(ctx, s.keys(event)[1], 0, -1).Result()
+}

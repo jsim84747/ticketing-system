@@ -73,10 +73,17 @@ func TestConcurrent10000AndWorkers(t *testing.T) {
 	workerCtx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	for i := 0; i < 4; i++ {
+		// Independent connection pools simulate separate server instances.
+		client := redis.NewClient(s.Client.Options())
+		t.Cleanup(func() { client.Close() })
+		other, err := New(client, s.Config, s.Clock)
+		if err != nil {
+			t.Fatal(err)
+		}
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			s.RunWorker(workerCtx, []string{e}, time.Millisecond, func(err error) { t.Error(err) })
+			other.RunWorker(workerCtx, []string{e}, time.Millisecond, func(err error) { t.Error(err) })
 		}()
 	}
 	var wg sync.WaitGroup
@@ -248,4 +255,43 @@ func TestWorkerAutomaticallyRefills(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestFreshArrivalCannotJumpQueue(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, _ := setup(t, c)
+	ctx := context.Background()
+	for _, id := range []string{"active", "first", "second"} {
+		if _, err := s.Join(ctx, e, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Tick(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Leave(ctx, e, "active"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Join(ctx, e, "newcomer")
+	if err != nil || v.Position != 3 {
+		t.Fatalf("queue jumping %+v %v", v, err)
+	}
+	ids, err := s.Tick(ctx, e)
+	if err != nil || len(ids) != 1 || ids[0] != "first" {
+		t.Fatalf("wrong admission %v %v", ids, err)
+	}
+}
+func TestClockRegressionKeepsFIFO(t *testing.T) {
+	s, e, c := setup(t, DefaultConfig())
+	ctx := context.Background()
+	a, err := s.Join(ctx, e, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Add(-time.Second)
+	b, err := s.Join(ctx, e, "second")
+	if err != nil || b.Ticket <= a.Ticket || b.Position != 2 {
+		t.Fatalf("clock regression: %+v %+v %v", a, b, err)
+	}
 }

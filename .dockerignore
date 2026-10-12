@@ -1,0 +1,5 @@
+.git
+.tools
+.env
+bin
+benchmarks
