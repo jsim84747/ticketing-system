@@ -40,6 +40,14 @@
 <form id="settings" class="room panel">
 <div class="room-top"><span class="live-dot"></span><span>Event settings</span></div>
 <label>Ticket name<input id="set-name" type="text" maxlength="80" placeholder="The Next Stage"></label>
+<fieldset class="badge-field"><legend>Sale status (shown to visitors)</legend>
+<div class="segmented three" role="radiogroup" aria-label="Sale status">
+<button type="button" role="radio" data-badge="Open" aria-checked="true">Open</button>
+<button type="button" role="radio" data-badge="Closed" aria-checked="false">Closed</button>
+<button type="button" role="radio" data-badge="other" aria-checked="false">Other</button>
+</div>
+<input id="set-badge" type="text" maxlength="40" placeholder="e.g. Sold out, Opens Friday" hidden>
+</fieldset>
 <label>Max concurrent users<input id="set-limit" type="number" min="1" max="100000" required></label>
 <label>Remaining tickets<input id="set-remaining" type="number" min="0" max="10000000" required></label>
 <button class="primary" type="submit">Save settings <span>→</span></button>

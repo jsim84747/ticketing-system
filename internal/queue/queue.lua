@@ -17,6 +17,8 @@ local timeout = tonumber(redis.call('HGET',config,'timeout'))
 local maxstay = tonumber(redis.call('HGET',config,'maxstay'))
 local mode = redis.call('HGET',config,'mode')
 local name = redis.call('HGET',config,'name') or ''
+-- Sale status badge shown to visitors ("Open", "Closed" or custom text).
+local badge = redis.call('HGET',config,'badge') or ''
 -- Scheduled opening (unix ms, 0 = none): in manual mode users can line up early
 -- and the first tick at or after open_at switches the event to auto admission.
 local openAt = tonumber(redis.call('HGET',config,'open_at') or '0')
@@ -26,7 +28,7 @@ if action == 'stats' then
     admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
     wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms'),
     remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations),
-    active_limit=limit,mode=mode,name=name,open_at=openAt})
+    active_limit=limit,mode=mode,name=name,open_at=openAt,badge=badge})
 end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)
@@ -171,7 +173,7 @@ if action == 'reserve' then
   remove(user)
   return result
 end
-local function encode(v) v.name = name; v.mode = mode; v.open_at = openAt; return cjson.encode(v) end
+local function encode(v) v.name = name; v.mode = mode; v.open_at = openAt; v.badge = badge; return cjson.encode(v) end
 local function status()
   local reservation = redis.call('HGET',reservations,user)
   if reservation then

@@ -44,6 +44,7 @@ type Status struct {
 	Name                 string `json:"name"`
 	Mode                 string `json:"mode"`
 	OpenAt               int64  `json:"open_at"`
+	Badge                string `json:"badge"`
 }
 type Store struct {
 	Client *redis.Client
@@ -281,8 +282,10 @@ func (s *Store) Admit(ctx context.Context, event string, n int) ([]string, error
 type Settings struct {
 	ActiveLimit *int    `json:"active_limit"`
 	Name        *string `json:"name"`
-	Remaining   *int    `json:"remaining"`
-	Mode        *string `json:"mode"`
+	// Badge is the sale status shown to visitors, such as "Open" or "Closed".
+	Badge     *string `json:"badge"`
+	Remaining *int    `json:"remaining"`
+	Mode      *string `json:"mode"`
 	// OpenAt schedules manual mode to switch to auto admission at this
 	// unix time in milliseconds; 0 cancels the schedule.
 	OpenAt *int64 `json:"open_at"`
@@ -294,6 +297,8 @@ func (v Settings) Validate() error {
 		return fmt.Errorf("max concurrent users must be between 1 and 100000")
 	case v.Name != nil && len([]rune(*v.Name)) > 80:
 		return fmt.Errorf("ticket name must be at most 80 characters")
+	case v.Badge != nil && len([]rune(strings.TrimSpace(*v.Badge))) > 40:
+		return fmt.Errorf("sale status must be at most 40 characters")
 	case v.Remaining != nil && (*v.Remaining < 0 || *v.Remaining > 10000000):
 		return fmt.Errorf("remaining tickets must be between 0 and 10000000")
 	case v.Mode != nil && *v.Mode != "auto" && *v.Mode != "manual":
@@ -326,6 +331,9 @@ func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) er
 		}
 		if v.Name != nil {
 			p.HSet(ctx, k[7], "name", *v.Name)
+		}
+		if v.Badge != nil {
+			p.HSet(ctx, k[7], "badge", strings.TrimSpace(*v.Badge))
 		}
 		if v.Mode != nil {
 			p.HSet(ctx, k[7], "mode", *v.Mode)
@@ -364,6 +372,7 @@ type Stats struct {
 	Mode            string `json:"mode"`
 	Name            string `json:"name"`
 	OpenAt          int64  `json:"open_at"`
+	Badge           string `json:"badge"`
 }
 
 func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {

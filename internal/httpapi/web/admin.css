@@ -47,6 +47,9 @@
 #admit{display:flex;flex-direction:column;gap:14px}
 .segmented{display:grid;grid-template-columns:1fr 1fr;background:#edf1e7;border-radius:10px;padding:4px}
 .segmented button{border:0;background:transparent;padding:11px;border-radius:8px;font-size:13px;font-weight:650;color:#5e7063}
+.segmented.three{grid-template-columns:1fr 1fr 1fr}
+.badge-field{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:7px}
+.badge-field legend{font-size:12px;color:#5e7063;padding:0;margin-bottom:7px}
 .segmented button[aria-checked=true]{background:#fff;color:#18362c;box-shadow:0 1px 4px #1f382714}
 .help{font-size:12px;line-height:1.7;color:#69766e;margin:0}
 #tz-note{margin-top:-6px;font-size:11px}

@@ -38,6 +38,7 @@ function render(v) {
   if (v.mode) { mode = v.mode; openAt = v.open_at || 0; }
   $('connection').textContent = 'Live';
   if (v.name) document.querySelectorAll('.ticket-name').forEach(el => { el.textContent = v.name; });
+  if (v.mode) { $('badge').textContent = v.badge || 'Open'; $('badge').classList.toggle('closed', v.badge === 'Closed'); }
   $('waiting-view').hidden = state === 'admitted' || state === 'completed';
   $('purchase-view').hidden = state !== 'admitted'; $('complete-view').hidden = state !== 'completed';
   $('join').hidden = state === 'waiting'; $('leave').hidden = !['waiting', 'admitted'].includes(state);

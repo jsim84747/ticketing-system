@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -203,6 +204,19 @@ func TestManualModeAndSettings(t *testing.T) {
 	st, err := s.Stats(ctx, e)
 	if err != nil || st.Active != 4 || st.Waiting != 2 || st.ActiveLimit != 4 || st.Mode != "auto" || st.Name != name || st.Remaining != 7 || st.OrderViolations != 0 {
 		t.Fatalf("stats %+v %v", st, err)
+	}
+	closed, long := "Closed", strings.Repeat("x", 41)
+	if err := s.UpdateSettings(ctx, e, Settings{Badge: &closed}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.Status(ctx, e, "6"); v.Badge != "Closed" {
+		t.Fatalf("badge not shown to visitors: %+v", v)
+	}
+	if st, _ := s.Stats(ctx, e); st.Badge != "Closed" {
+		t.Fatalf("badge not in stats: %+v", st)
+	}
+	if err := s.UpdateSettings(ctx, e, Settings{Badge: &long}); err == nil {
+		t.Fatal("41-character badge accepted")
 	}
 	bad, badMode := 0, "sometimes"
 	if err := s.UpdateSettings(ctx, e, Settings{ActiveLimit: &bad}); err == nil {

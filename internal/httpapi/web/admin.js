@@ -24,6 +24,8 @@ function fillSettings(e, force) {
   if (!force && shownEvent === e.id) return;
   shownEvent = e.id;
   $('set-name').value = e.name; $('set-limit').value = e.active_limit; $('set-remaining').value = e.remaining;
+  const preset = ['', 'Open', 'Closed'].includes(e.badge);
+  setBadgeChoice(preset ? (e.badge || 'Open') : 'other'); $('set-badge').value = preset ? '' : e.badge;
 }
 const countdown = ms => {
   const s = Math.max(0, Math.ceil(ms / 1000)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
@@ -49,6 +51,14 @@ function renderSchedule(e) {
     $('open-at').value = localInput(next);
   }
 }
+// Sale status: Open and Closed are presets; Other reveals a free-text box.
+let badgeChoice = 'Open';
+function setBadgeChoice(choice) {
+  badgeChoice = choice;
+  document.querySelectorAll('[data-badge]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.badge === choice)));
+  $('set-badge').hidden = choice !== 'other';
+}
+document.querySelectorAll('[data-badge]').forEach(b => { b.onclick = () => { setBadgeChoice(b.dataset.badge); if (b.dataset.badge === 'other') $('set-badge').focus(); }; });
 function renderMode(mode) {
   const manual = mode === 'manual';
   $('mode-auto').setAttribute('aria-checked', String(!manual)); $('mode-manual').setAttribute('aria-checked', String(manual));
@@ -172,7 +182,9 @@ $('logout').onclick = () => logout();
 $('event').onchange = () => { shownEvent = ''; editing = ''; refresh(); };
 $('settings').onsubmit = async e => {
   e.preventDefault();
-  const body = {name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value)};
+  const badge = badgeChoice === 'other' ? $('set-badge').value.trim() : badgeChoice;
+  if (!badge) { flash('settings-message', 'Type a sale status, or pick Open or Closed.', false); return; }
+  const body = {name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value), badge};
   try { await post('settings', body); flash('settings-message', 'Settings saved.'); shownEvent = ''; document.activeElement.blur(); refresh(); }
   catch (err) { flash('settings-message', `Couldn't save: ${err.message}`, false); }
 };
