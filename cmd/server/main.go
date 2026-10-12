@@ -37,6 +37,18 @@ func duration(k, d string) time.Duration {
 	}
 	return v
 }
+
+// listenAddr prefers HTTP_ADDR. Hosting platforms such as Render set PORT
+// instead and need the server reachable from outside the container.
+func listenAddr() string {
+	if addr := os.Getenv("HTTP_ADDR"); addr != "" {
+		return addr
+	}
+	if port := os.Getenv("PORT"); port != "" {
+		return "0.0.0.0:" + port
+	}
+	return "127.0.0.1:8080"
+}
 func main() {
 	signer, err := auth.New([]byte(os.Getenv("TOKEN_SECRET")), nil)
 	if err != nil {
@@ -77,7 +89,7 @@ func main() {
 		defer close(workerDone)
 		q.RunWorker(ctx, events, interval, func(err error) { log.Printf("worker: %v", err) })
 	}()
-	srv := &http.Server{Addr: env("HTTP_ADDR", "127.0.0.1:8080"), Handler: httpapi.Handler(q, signer, events, adminToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	srv := &http.Server{Addr: listenAddr(), Handler: httpapi.Handler(q, signer, events, adminToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
