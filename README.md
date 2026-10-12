@@ -14,7 +14,7 @@ Go and Redis have been prepared in `.tools/` in this workspace. This directory i
 ./scripts/demo.sh
 ```
 
-[Open the demo](http://127.0.0.1:8080/?event=demo-2). The demo script sets capacity to **2 users**, so you can see the queue with just three tabs. The server's default capacity is 1,000 users. If port 8080 is already in use, stop the existing server or run `HTTP_ADDR=127.0.0.1:8081 ./scripts/demo.sh`.
+[Open the demo](http://localhost:8080) and the [admin console](http://localhost:8080/admin) (the password is printed on startup). The demo script sets capacity to **2 users**, so you can see the queue with just three tabs. The server's default capacity is 1,000 users. If port 8080 is already in use, stop the existing server or run `HTTP_ADDR=127.0.0.1:8081 ./scripts/demo.sh`.
 
 1. Click **Join Waiting Room** on the screen.
 2. Open two more tabs using **New User Tab** and join. The third user waits.
@@ -36,7 +36,7 @@ openssl rand -hex 32
 docker compose up --build
 ```
 
-Open the [default screen](http://127.0.0.1:8080/?event=demo). To change `.env` to `ACTIVE_LIMIT=2` for tab testing, set it **before the first run**. If you change the capacity configuration for an event that is already registered, startup is rejected with `CONFIG_MISMATCH` as a safety measure. Use a new event ID for a new test, such as `EVENT_IDS=demo-small`.
+Open the [default screen](http://localhost:8080). To change `.env` to `ACTIVE_LIMIT=2` for tab testing, set it **before the first run**. If you change the capacity configuration for an event that is already registered, startup is rejected with `CONFIG_MISMATCH` as a safety measure. Use a new event ID for a new test, such as `EVENT_IDS=demo-small`.
 
 Compose Redis preserves AOF data in a volume. `docker compose down` does not delete the volume. Docker was unavailable on this computer, so the Compose build was not run; actual validation used native Go/Redis.
 
@@ -56,7 +56,7 @@ Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event con
 
 ### User Page and Admin Page
 
-- **User page** (`/?event=demo`): the waiting room only. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
+- **User page** (`/`): the waiting room only. The root URL opens the first event in `EVENT_IDS`; other events are reachable with `/?event=<id>`. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
 - **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every 2 seconds. Admins can remove an admitted user, and the slot passes to the next user in line. It also links to a test user tab with the debug tools enabled.
 
 `demo.sh` generates an admin password in `.tools/demo-admin-token` and prints it on startup.

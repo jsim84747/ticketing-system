@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const eventID = new URLSearchParams(location.search).get('event') || 'demo';
+const eventID = new URLSearchParams(location.search).get('event') || document.documentElement.dataset.event || 'demo';
 const useSSE = new URLSearchParams(location.search).get('transport') === 'sse';
 // Test tools are for developers; the admin console links here with ?debug=1.
 $('testing').hidden = new URLSearchParams(location.search).get('debug') !== '1';

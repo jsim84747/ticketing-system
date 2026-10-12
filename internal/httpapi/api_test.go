@@ -183,6 +183,11 @@ func TestSSEAndStatic(t *testing.T) {
 	if w.Code != 200 || w.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(w.Body.String(), `"status":"admitted"`) || !strings.Contains(w.Body.String(), `"token":`) {
 		t.Fatalf("stream: %d %s", w.Code, w.Body.String())
 	}
+	root := httptest.NewRecorder()
+	h.ServeHTTP(root, httptest.NewRequest("GET", "/", nil))
+	if root.Code != 200 || !strings.Contains(root.Body.String(), `data-event="`+event+`"`) {
+		t.Fatalf("root page should default to the first event: %d %s", root.Code, root.Body.String()[:min(200, root.Body.Len())])
+	}
 	for _, path := range []string{"/", "/app.js", "/style.css", "/admin", "/admin.js", "/admin.css"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/jsim84747/ticketing-system/internal/auth"
 	"github.com/jsim84747/ticketing-system/internal/queue"
+	"html"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -36,6 +37,16 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 	m := http.NewServeMux()
 	static, _ := fs.Sub(webFiles, "web")
 	m.Handle("GET /", http.FileServer(http.FS(static)))
+	// The bare root serves the first configured event, so the shareable link
+	// needs no ?event= query. Other events stay reachable with ?event=<id>.
+	page, _ := fs.ReadFile(static, "index.html")
+	if len(events) > 0 {
+		page = []byte(strings.Replace(string(page), `<html lang="ko">`, `<html lang="ko" data-event="`+html.EscapeString(events[0])+`">`, 1))
+	}
+	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(page)
+	})
 	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, static, "admin.html")
 	})

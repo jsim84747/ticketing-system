@@ -32,6 +32,7 @@ if [ "$REDIS_URL" = redis://127.0.0.1:16380/0 ]; then
   sleep 1
   if ! kill -0 "$redis_pid" 2>/dev/null; then echo 'Could not start Redis. See .tools/demo-redis.log' >&2; exit 1; fi
 fi
-echo "User page:  http://${HTTP_ADDR:-127.0.0.1:8080}/?event=${EVENT_IDS%%,*} (capacity $ACTIVE_LIMIT)"
-echo "Admin page: http://${HTTP_ADDR:-127.0.0.1:8080}/admin (password: $ADMIN_TOKEN)"
+site="http://${HTTP_ADDR:-localhost:8080}"
+echo "User page:  $site (event ${EVENT_IDS%%,*}, capacity $ACTIVE_LIMIT)"
+echo "Admin page: $site/admin (password: $ADMIN_TOKEN)"
 scripts/go-local.sh run ./cmd/server
