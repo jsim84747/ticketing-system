@@ -25,7 +25,12 @@
 .users th{text-align:left;color:#798679;font-weight:400;font-size:11px;padding:12px 0}
 .users td{border-top:1px solid #edf0e8;padding:10px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .users td:last-child{text-align:right;width:90px}
-#reservations td:last-child{width:auto;text-align:left;font-size:11px;color:#6a796e}
+#reservations td:nth-child(4){font-size:11px;color:#6a796e}
+#reservations td:last-child{width:130px;white-space:nowrap}
+#reservations td button{margin-left:6px;border:1px solid #cad7bd;color:#36553c}
+#reservations td button.save{background:#254c3a;border-color:#254c3a;color:#fff}
+#reservations input{font:inherit;font-size:12px;padding:7px 8px;border:1px solid #cad7bd;border-radius:7px;background:#fbfcf9;width:100%;min-width:0}
+#reservations .name-edit{display:flex;gap:6px}
 .users{margin-top:14px}
 .room-top .csv{width:auto;padding:7px 12px;margin-left:12px;font-size:11px}
 .users td button{border:1px solid #e3cfc6;border-radius:7px;background:#fff;color:#8a4b3a;padding:6px 10px;font-size:11px}

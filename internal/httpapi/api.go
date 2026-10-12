@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/jsim84747/ticketing-system/internal/auth"
 	"github.com/jsim84747/ticketing-system/internal/queue"
@@ -140,6 +141,27 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			list = list[:n]
 		}
 		respond(w, 200, map[string]any{"total": total, "reservations": list})
+	}))
+	m.HandleFunc("PUT /admin/api/events/{id}/reservations/{user}", admin(func(w http.ResponseWriter, r *http.Request) {
+		var who queue.Customer
+		if err := json.NewDecoder(r.Body).Decode(&who); err != nil {
+			problem(w, 400, "first name, last name and email are required")
+			return
+		}
+		if _, err := who.Normalize(); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
+		v, err := q.UpdateReservation(r.Context(), r.PathValue("id"), r.PathValue("user"), who)
+		if errors.Is(err, queue.ErrReservationNotFound) {
+			problem(w, 404, "reservation not found")
+			return
+		}
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		respond(w, 200, v)
 	}))
 	m.HandleFunc("POST /admin/api/events/{id}/kick", admin(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

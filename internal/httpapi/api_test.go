@@ -399,4 +399,30 @@ func TestReservationDetailsAndAdminList(t *testing.T) {
 	if strings.Contains(w.Body.String(), `"generation"`) {
 		t.Fatalf("reservations leak the admission generation: %s", w.Body.String())
 	}
+
+	// Editing a reservation changes the details only.
+	edit := "/admin/api/events/" + event + "/reservations/" + user
+	if w := call("PUT", edit, "wrong", "", `{"first_name":"A","last_name":"B","email":"a@b.co"}`); w.Code != 401 {
+		t.Fatalf("edit without admin password: %d", w.Code)
+	}
+	if w := call("PUT", edit, "admin-secret", "", `{"first_name":"A","last_name":"B","email":"nope"}`); w.Code != 400 {
+		t.Fatalf("edit with bad email: %d", w.Code)
+	}
+	if w := call("PUT", "/admin/api/events/"+event+"/reservations/nobody", "admin-secret", "", `{"first_name":"A","last_name":"B","email":"a@b.co"}`); w.Code != 404 {
+		t.Fatalf("edit unknown reservation: %d", w.Code)
+	}
+	before := r.HGet(ctx, "vwr:{"+event+"}:reservations", user).Val()
+	w = call("PUT", edit, "admin-secret", "", `{"first_name":"Ji-won","last_name":"Shim","email":" new@example.com "}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"email":"new@example.com"`) || strings.Contains(w.Body.String(), `"generation"`) {
+		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
+	}
+	var was, now queue.Reservation
+	json.Unmarshal([]byte(before), &was)
+	json.Unmarshal([]byte(r.HGet(ctx, "vwr:{"+event+"}:reservations", user).Val()), &now)
+	if now.FirstName != "Ji-won" || now.ID != was.ID || now.ReservedAt != was.ReservedAt || now.Generation != was.Generation {
+		t.Fatalf("edit changed more than the details: %+v -> %+v", was, now)
+	}
+	if n := r.Get(ctx, "vwr:{"+event+"}:stock").Val(); n != "4" {
+		t.Fatalf("editing must not touch inventory, stock %s", n)
+	}
 }

@@ -136,6 +136,16 @@ if action == 'leave' then
   redis.call('ZREM',waiting,user)
   redis.call('HDEL',joined,user)
 end
+-- Admins correct the name or email on a reservation; the ticket is unchanged.
+if action == 'edit_reservation' then
+  local previous = redis.call('HGET',reservations,user)
+  if not previous then return redis.error_reply('NOT_FOUND') end
+  local v = cjson.decode(previous)
+  v.first_name, v.last_name, v.email = ARGV[7], ARGV[8], ARGV[9]
+  local result = cjson.encode(v)
+  redis.call('HSET',reservations,user,result)
+  return result
+end
 if action == 'reserve' then
   local previous = redis.call('HGET',reservations,user)
   if previous then

@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -187,6 +188,29 @@ func (s *Store) Reserve(ctx context.Context, event, user, generation, id string,
 	}
 	var v Reservation
 	err = json.Unmarshal([]byte(raw), &v)
+	return v, err
+}
+
+// ErrReservationNotFound means the user has no reservation for the event.
+var ErrReservationNotFound = errors.New("reservation not found")
+
+// UpdateReservation changes who a reservation is for. The ticket itself,
+// its number and time are unchanged.
+func (s *Store) UpdateReservation(ctx context.Context, event, user string, who Customer) (Reservation, error) {
+	who, err := who.Normalize()
+	if err != nil {
+		return Reservation{}, err
+	}
+	raw, err := s.run(ctx, event, "edit_reservation", user, who.FirstName, who.LastName, who.Email)
+	if err != nil {
+		if strings.Contains(err.Error(), "NOT_FOUND") {
+			return Reservation{}, ErrReservationNotFound
+		}
+		return Reservation{}, err
+	}
+	var v Reservation
+	err = json.Unmarshal([]byte(raw), &v)
+	v.UserID, v.Generation = user, ""
 	return v, err
 }
 

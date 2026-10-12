@@ -91,16 +91,44 @@ function renderUsers(v) {
 }
 const fullName = v => [v.first_name, v.last_name].filter(Boolean).join(' ') || '—';
 const when = ms => ms ? new Date(ms).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'medium'}) : '—';
+// Only one row is edited at a time; the live refresh leaves the table alone
+// while it is open so it never overwrites what the admin is typing.
+let editing = '';
+function cell(text) { const td = document.createElement('td'); td.textContent = text; return td; }
+function input(value, label, type = 'text') { return Object.assign(document.createElement('input'), {value: value || '', type, ariaLabel: label, required: true}); }
+function button(text, action, cls = '') { return Object.assign(document.createElement('button'), {type: 'button', textContent: text, className: cls, onclick: action}); }
+function reservationRow(r) {
+  const row = document.createElement('tr');
+  if (editing !== r.user_id) {
+    row.append(cell(fullName(r)), cell(r.email || '—'), cell(when(r.reserved_at)), cell(r.reservation_id));
+    const actions = document.createElement('td');
+    actions.append(button('Edit', () => { editing = r.user_id; $('res-message').textContent = ''; row.replaceWith(reservationRow(r)); }));
+    row.append(actions);
+    return row;
+  }
+  const first = input(r.first_name, 'First name'), last = input(r.last_name, 'Last name'), email = input(r.email, 'Email', 'email');
+  const names = document.createElement('td'), mail = document.createElement('td'), actions = document.createElement('td');
+  const box = document.createElement('div'); box.className = 'name-edit'; box.append(first, last); names.append(box); mail.append(email);
+  const save = button('Save', async () => {
+    save.disabled = true;
+    try {
+      await api(`/admin/api/events/${encodeURIComponent(selected())}/reservations/${encodeURIComponent(r.user_id)}`, 'PUT',
+        {first_name: first.value.trim(), last_name: last.value.trim(), email: email.value.trim()});
+      editing = ''; flash('res-message', 'Reservation updated.'); refresh();
+    } catch (err) { flash('res-message', `Couldn't save: ${err.message}`, false); save.disabled = false; }
+  }, 'save');
+  const cancel = button('Cancel', () => { editing = ''; $('res-message').textContent = ''; refresh(); });
+  actions.append(save, cancel);
+  for (const field of [first, last, email]) field.onkeydown = e => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); };
+  row.append(names, mail, cell(when(r.reserved_at)), cell(r.reservation_id), actions);
+  setTimeout(() => first.focus());
+  return row;
+}
 function renderReservations(v) {
   $('res-count').textContent = v.total > v.reservations.length ? `newest ${v.reservations.length} of ${num(v.total)}` : num(v.total);
   $('res-empty').hidden = v.total > 0;
-  $('reservations').replaceChildren(...v.reservations.map(r => {
-    const row = document.createElement('tr');
-    for (const text of [fullName(r), r.email || '—', when(r.reserved_at), r.reservation_id]) {
-      const cell = document.createElement('td'); cell.textContent = text; row.append(cell);
-    }
-    return row;
-  }));
+  if (editing) return;
+  $('reservations').replaceChildren(...v.reservations.map(reservationRow));
 }
 // Quote every field, and neutralize values a spreadsheet would run as a formula.
 const csvCell = value => { let s = String(value ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
@@ -134,7 +162,7 @@ $('login-form').onsubmit = e => {
   sessionStorage.setItem('admin_token', token); $('login-message').textContent = ''; show();
 };
 $('logout').onclick = () => logout();
-$('event').onchange = () => { shownEvent = ''; refresh(); };
+$('event').onchange = () => { shownEvent = ''; editing = ''; refresh(); };
 $('settings').onsubmit = async e => {
   e.preventDefault();
   const body = {name: $('set-name').value.trim(), active_limit: Number($('set-limit').value), remaining: Number($('set-remaining').value)};
