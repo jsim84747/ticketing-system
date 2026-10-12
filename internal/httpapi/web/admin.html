@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ticketing — Admin</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/admin.css">
+<script src="/admin.js" defer></script>
+</head>
+<body>
+<header><a href="/admin" class="brand">ticketing<span>●</span></a><span class="tag">ADMIN CONSOLE</span></header>
+<main class="admin">
+<section id="login" class="room login">
+<div class="room-top"><span class="live-dot"></span><span>Admin sign in</span></div>
+<form id="login-form">
+<label for="password" class="caption">Admin password</label>
+<input id="password" type="password" autocomplete="current-password" required>
+<button class="primary" type="submit">Sign in <span>→</span></button>
+</form>
+<p id="login-message" class="admin-message" role="status" aria-live="polite"></p>
+</section>
+
+<section id="dashboard" hidden>
+<div class="toolbar">
+<label>Event <select id="event"></select></label>
+<button id="new-event" class="secondary" type="button">+ New event</button>
+<button id="make-main" class="secondary" type="button">Make main event</button>
+<button id="delete-event" class="secondary danger" type="button">Delete event</button>
+<a id="user-page" target="_blank" rel="noopener noreferrer">User page ↗</a>
+<a id="test-page" target="_blank" rel="noopener noreferrer">Test user tab ↗</a>
+<span id="updated" class="updated">Loading</span>
+<button id="logout" class="secondary">Sign out</button>
+</div>
+
+<form id="create-event" class="room panel create-event" hidden>
+<div class="room-top"><span class="live-dot"></span><span>New event</span></div>
+<div class="create-grid">
+<label>Event name<input id="new-name" type="text" maxlength="80" placeholder="Spring Concert" required></label>
+<label>Event ID (used in links)<input id="new-id" type="text" maxlength="64" pattern="[A-Za-z0-9_-]+" placeholder="spring-concert" required></label>
+<label>Tickets<input id="new-tickets" type="number" min="0" max="10000000" value="100" required></label>
+<label>Max concurrent users<input id="new-limit" type="number" min="1" max="100000" value="1000" required></label>
+</div>
+<div class="create-actions"><button class="primary" type="submit">Create event <span>→</span></button><button id="cancel-create" class="secondary" type="button">Cancel</button></div>
+<p id="create-message" class="admin-message" role="status" aria-live="polite"></p>
+</form>
+<p id="event-message" class="admin-message" role="status" aria-live="polite"></p>
+
+<div class="room capacity">
+<div class="capacity-top"><p class="caption">Admitted right now</p><span id="mode-badge" class="mode-badge">AUTO</span></div>
+<div class="number"><span id="active">—</span><small id="limit">/ —</small></div>
+<div class="progress-label"><span>Capacity used</span><span id="usage-text">0%</span></div>
+<progress id="usage" value="0" max="100" aria-label="Capacity used"></progress>
+</div>
+
+<div class="panels">
+<form id="settings" class="room panel">
+<div class="room-top"><span class="live-dot"></span><span>Event settings</span></div>
+<label>Ticket name<input id="set-name" type="text" maxlength="80" placeholder="The Next Stage"></label>
+<label>Event date &amp; time<input id="set-starts" type="datetime-local"></label>
+<label>Venue<input id="set-venue" type="text" maxlength="100" placeholder="e.g. Madison Square Garden"></label>
+<label>Description<textarea id="set-description" maxlength="500" rows="3" placeholder="Shown to visitors under the headline"></textarea></label>
+<fieldset class="badge-field"><legend>Sale status (shown to visitors)</legend>
+<div class="segmented three" role="radiogroup" aria-label="Sale status">
+<button type="button" role="radio" data-badge="Open" aria-checked="true">Open</button>
+<button type="button" role="radio" data-badge="Closed" aria-checked="false">Closed</button>
+<button type="button" role="radio" data-badge="other" aria-checked="false">Other</button>
+</div>
+<input id="set-badge" type="text" maxlength="40" placeholder="e.g. Sold out, Opens Friday" hidden>
+</fieldset>
+<label>Max concurrent users<input id="set-limit" type="number" min="1" max="100000" required></label>
+<label>Remaining tickets<input id="set-remaining" type="number" min="0" max="10000000" required></label>
+<label>Max tickets per order<input id="set-per-order" type="number" min="1" max="20" required></label>
+<button class="primary" type="submit">Save settings <span>→</span></button>
+<p id="settings-message" class="admin-message" role="status" aria-live="polite"></p>
+</form>
+
+<div class="room panel">
+<div class="room-top"><span class="live-dot"></span><span>Admission mode</span></div>
+<div class="segmented" role="radiogroup" aria-label="Admission mode">
+<button type="button" id="mode-auto" role="radio" aria-checked="true">Auto</button>
+<button type="button" id="mode-manual" role="radio" aria-checked="false">Manual</button>
+</div>
+<p id="mode-help" class="help">The next person in line is let in automatically whenever a spot opens.</p>
+<div id="schedule" hidden>
+<form id="schedule-form">
+<label>Open the doors at<input id="open-at" type="datetime-local" required></label>
+<fieldset class="badge-field"><legend>Before the doors open</legend>
+<div class="segmented" role="radiogroup" aria-label="Before the doors open">
+<button type="button" role="radio" data-lock="0" aria-checked="true">Line up early</button>
+<button type="button" role="radio" data-lock="1" aria-checked="false">Lock the button</button>
+</div>
+<p id="lock-help" class="help"></p>
+</fieldset>
+<p id="tz-note" class="help"></p>
+<button class="primary" type="submit">Schedule opening <span>→</span></button>
+</form>
+<div id="scheduled" class="scheduled" hidden>
+<span>Opens at</span><strong id="scheduled-time">—</strong><small id="scheduled-left"></small>
+<button type="button" id="cancel-schedule" class="secondary">Cancel schedule</button>
+</div>
+</div>
+<form id="admit" hidden>
+<label>Let in the next<input id="admit-count" type="number" min="1" max="1000" value="1" required></label>
+<button class="primary" type="submit">Admit <span>→</span></button>
+</form>
+<p id="mode-message" class="admin-message" role="status" aria-live="polite"></p>
+</div>
+</div>
+
+<div class="cards">
+<div class="card"><span>Waiting</span><strong id="waiting">—</strong></div>
+<div class="card"><span>Tickets left</span><strong id="remaining">—</strong></div>
+<div class="card"><span>Reservations</span><strong id="reserved">—</strong></div>
+<div class="card"><span>Total admitted</span><strong id="admissions">—</strong></div>
+<div class="card"><span>Peak concurrent</span><strong id="peak">—</strong></div>
+<div class="card"><span>Order violations</span><strong id="violations">—</strong></div>
+<div class="card"><span>Average wait</span><strong id="wait-avg">—</strong></div>
+<div class="card"><span>Longest wait</span><strong id="wait-max">—</strong></div>
+</div>
+
+<div class="room users">
+<div class="room-top"><span class="live-dot"></span><span>Admitted users</span><span id="users-count" class="users-count"></span><button id="kick-all" class="secondary csv danger" type="button">Remove all</button></div>
+<table><thead><tr><th>User ID</th><th></th></tr></thead><tbody id="users"></tbody></table>
+<p id="users-empty" class="admin-message">No one is admitted right now.</p>
+<p id="users-message" class="admin-message" role="status" aria-live="polite"></p>
+</div>
+<div class="room users">
+<div class="room-top"><span class="live-dot"></span><span>Reservations</span><span id="res-count" class="users-count"></span><button id="csv" class="secondary csv" type="button">Download CSV</button></div>
+<table><thead><tr><th>Name</th><th>Email</th><th>Tickets</th><th>Reserved at</th><th>Reservation #</th><th></th></tr></thead><tbody id="reservations"></tbody></table>
+<p id="res-message" class="admin-message" role="status" aria-live="polite"></p>
+<p id="res-empty" class="admin-message">No reservations yet.</p>
+</div>
+<p id="message" class="admin-message" role="status" aria-live="polite"></p>
+</section>
+</main>
+<footer><span>Redis + Go · Admin console</span><span>Refreshes every second</span></footer>
+</body></html>

@@ -1,0 +1,72 @@
+.admin{display:block;max-width:1000px;padding-top:48px}
+.login{max-width:440px;margin:40px auto;min-height:0}
+.login form{display:flex;flex-direction:column;gap:14px}
+.login .caption{margin:28px 0 0}
+.login input{font:inherit;font-size:15px;padding:14px;border:1px solid #dce4d5;border-radius:10px;background:#fbfcf9}
+.admin-message{font-size:12px;color:#8a4b3a;min-height:1em;margin:14px 0 0}
+#users-empty{color:#7a867d}
+.toolbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:13px;margin-bottom:22px}
+.toolbar label{display:flex;align-items:center;gap:8px;font-weight:650}
+.toolbar select{font:inherit;padding:8px 10px;border:1px solid #dce4d5;border-radius:8px;background:#fff}
+.toolbar a{color:#335638;white-space:nowrap}
+.toolbar .updated{margin-left:auto;color:#7a867d;font-size:11px}
+.toolbar .secondary{width:auto;padding:8px 14px}
+.capacity{min-height:0}
+.capacity .caption{margin-top:0}
+.capacity .number{margin-bottom:20px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}
+.card{background:#fff;border:1px solid #dfe6da;border-radius:14px;padding:18px 20px}
+.card span{display:block;color:#798679;font-size:11px}
+.card strong{display:block;font-size:22px;margin-top:10px;font-weight:650;font-variant-numeric:tabular-nums}
+.card.alert strong{color:#a33a24}
+.users{min-height:0}
+.users-count{margin-left:auto;color:#7a867d;font-size:11px;font-weight:400}
+.users table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.users th{text-align:left;color:#798679;font-weight:400;font-size:11px;padding:12px 0}
+.users td{border-top:1px solid #edf0e8;padding:10px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.users td:last-child{text-align:right;width:90px}
+#reservations td:nth-child(5){font-size:11px;color:#6a796e}
+#reservations td:last-child{width:150px;white-space:nowrap;text-align:right}
+#reservations td button{margin-left:6px;border:1px solid #cad7bd;color:#36553c}
+#reservations td button.danger{border-color:#e3cfc6;color:#8a4b3a}
+#reservations td button.save{background:#254c3a;border-color:#254c3a;color:#fff}
+#reservations input{font:inherit;font-size:12px;padding:7px 8px;border:1px solid #cad7bd;border-radius:7px;background:#fbfcf9;width:100%;min-width:0}
+#reservations .name-edit{display:flex;gap:6px}
+.users{margin-top:14px}
+.room-top .danger{color:#8a4b3a;border-color:#e3cfc6}
+.room-top .csv{width:auto;padding:7px 12px;margin-left:12px;font-size:11px}
+.users td button{border:1px solid #e3cfc6;border-radius:7px;background:#fff;color:#8a4b3a;padding:6px 10px;font-size:11px}
+@media(max-width:860px){.admin{padding:24px}.cards{grid-template-columns:repeat(2,1fr)}.toolbar .updated{margin-left:0;width:100%}}
+.capacity-top{display:flex;align-items:center;justify-content:space-between}
+.mode-badge{font-size:10px;letter-spacing:1.5px;font-weight:700;padding:6px 10px;border-radius:20px;background:#e4eccf;color:#456238}
+.mode-badge.manual{background:#f6e4cf;color:#8a5a1f}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+.panel{min-height:0;display:flex;flex-direction:column;gap:14px}
+.panel .room-top{margin-bottom:4px}
+.panel label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:#5e7063}
+.panel input{font:inherit;font-size:15px;padding:12px;border:1px solid #dce4d5;border-radius:10px;background:#fbfcf9;color:#172623}
+#admit{display:flex;flex-direction:column;gap:14px}
+.segmented{display:grid;grid-template-columns:1fr 1fr;background:#edf1e7;border-radius:10px;padding:4px}
+.segmented button{border:0;background:transparent;padding:11px;border-radius:8px;font-size:13px;font-weight:650;color:#5e7063}
+.segmented.three{grid-template-columns:1fr 1fr 1fr}
+.badge-field{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:7px}
+.badge-field legend{font-size:12px;color:#5e7063;padding:0;margin-bottom:7px}
+.segmented button[aria-checked=true]{background:#fff;color:#18362c;box-shadow:0 1px 4px #1f382714}
+.help{font-size:12px;line-height:1.7;color:#69766e;margin:0}
+#tz-note{margin-top:-6px;font-size:11px}
+.admin-message.ok{color:#456830}
+#schedule-form{display:flex;flex-direction:column;gap:14px}
+.scheduled{display:flex;flex-direction:column;gap:6px;background:#f6f0e4;border:1px solid #ecdcc0;border-radius:12px;padding:16px}
+.scheduled span{font-size:11px;color:#8a5a1f;letter-spacing:1px;text-transform:uppercase}
+.scheduled strong{font-size:20px;color:#5a3a12}
+.scheduled small{font-size:12px;color:#8a6a3f;margin-bottom:6px}
+@media(max-width:860px){.panels{grid-template-columns:1fr}}
+
+.toolbar .secondary.danger{color:#8a4b3a;border-color:#e3cfc6}
+.create-event{margin-bottom:18px}
+.create-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.create-actions{display:flex;gap:12px}
+.create-actions .primary{flex:1}.create-actions .secondary{width:auto;padding:12px 20px}
+.panel textarea{font:inherit;font-size:14px;padding:12px;border:1px solid #dce4d5;border-radius:10px;background:#fbfcf9;color:#172623;resize:vertical}
+#event-message:empty{display:none}
+@media(max-width:860px){.create-grid{grid-template-columns:1fr}}

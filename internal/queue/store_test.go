@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -149,16 +150,266 @@ func TestLeavePromotesExactlyFIFO(t *testing.T) {
 		t.Fatalf("admitted duplicate %+v %v", v, err)
 	}
 }
-func TestConfigMismatchFailsClosed(t *testing.T) {
-	s, e, _ := setup(t, DefaultConfig())
+
+// Settings live in Redis, so a server started with different defaults still
+// enforces the stored limit instead of disagreeing with its peers.
+func TestStoredSettingsWinOverServerDefaults(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, _ := setup(t, c)
 	ctx := context.Background()
-	if _, err := s.Join(ctx, e, "one"); err != nil {
-		t.Fatal(err)
-	}
+	s.Join(ctx, e, "one")
+	s.Join(ctx, e, "two")
 	other := *s
 	other.Config.ActiveLimit = 2000
-	if _, err := other.Tick(ctx, e); err == nil {
-		t.Fatal("different limits accepted")
+	if ids, err := other.Tick(ctx, e); err != nil || len(ids) != 1 {
+		t.Fatalf("tick with other defaults admitted %v %v", ids, err)
+	}
+}
+
+func TestManualModeAndSettings(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, _ := setup(t, c)
+	ctx := context.Background()
+	for i := 1; i <= 6; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	manual, name := "manual", "Spring Concert"
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	// In manual mode the worker only expires leases; it admits nobody.
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 0 {
+		t.Fatalf("manual tick admitted %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "1"); v.Status != "waiting" || v.Name != name || v.Mode != "manual" || v.EstimatedWaitSeconds != nil {
+		t.Fatalf("waiting status %+v", v)
+	}
+	// The admin admits users in FIFO order, still capped by the limit.
+	if ids, err := s.Admit(ctx, e, 1); err != nil || len(ids) != 1 || ids[0] != "1" {
+		t.Fatalf("admit 1: %v %v", ids, err)
+	}
+	if ids, err := s.Admit(ctx, e, 5); err != nil || len(ids) != 1 || ids[0] != "2" {
+		t.Fatalf("admit capped by limit: %v %v", ids, err)
+	}
+	// Raising the limit makes room; switching back to auto lets the worker fill it.
+	limit, auto, remaining := 4, "auto", 7
+	if err := s.UpdateSettings(ctx, e, Settings{ActiveLimit: &limit, Mode: &auto, Remaining: &remaining}); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "3" || ids[1] != "4" {
+		t.Fatalf("auto tick after raising limit: %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "5"); v.Remaining != 7 || v.InLine != 2 || v.Inside != 4 {
+		t.Fatalf("visitors should see tickets left and line size: %+v", v)
+	}
+	st, err := s.Stats(ctx, e)
+	if err != nil || st.Active != 4 || st.Waiting != 2 || st.ActiveLimit != 4 || st.Mode != "auto" || st.Name != name || st.Remaining != 7 || st.OrderViolations != 0 {
+		t.Fatalf("stats %+v %v", st, err)
+	}
+	closed, long := "Closed", strings.Repeat("x", 41)
+	if err := s.UpdateSettings(ctx, e, Settings{Badge: &closed}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.Status(ctx, e, "6"); v.Badge != "Closed" {
+		t.Fatalf("badge not shown to visitors: %+v", v)
+	}
+	if st, _ := s.Stats(ctx, e); st.Badge != "Closed" {
+		t.Fatalf("badge not in stats: %+v", st)
+	}
+	if err := s.UpdateSettings(ctx, e, Settings{Badge: &long}); err == nil {
+		t.Fatal("41-character badge accepted")
+	}
+	bad, badMode := 0, "sometimes"
+	if err := s.UpdateSettings(ctx, e, Settings{ActiveLimit: &bad}); err == nil {
+		t.Fatal("limit 0 accepted")
+	}
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &badMode}); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
+	if _, err := s.Admit(ctx, e, 0); err == nil {
+		t.Fatal("admit 0 accepted")
+	}
+}
+
+func TestScheduledOpening(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	manual := "manual"
+	openAt := clock.Now().Add(time.Minute).UnixMilli()
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &openAt}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	// Before opening, users only line up.
+	clock.Add(59 * time.Second)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 0 {
+		t.Fatalf("admitted before opening: %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "1"); v.Status != "waiting" || v.OpenAt != openAt || v.Mode != "manual" {
+		t.Fatalf("waiting status %+v", v)
+	}
+	// At the opening time, admission starts in FIFO order and the event switches to auto.
+	clock.Add(time.Second)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "1" || ids[1] != "2" {
+		t.Fatalf("admitted at opening: %v %v", ids, err)
+	}
+	if st, _ := s.Stats(ctx, e); st.Mode != "auto" || st.OpenAt != 0 {
+		t.Fatalf("after opening %+v", st)
+	}
+	// Setting open_at to 0 cancels the schedule, so manual mode stays closed.
+	cancel := int64(0)
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &cancel}); err != nil {
+		t.Fatal(err)
+	}
+	s.Leave(ctx, e, "1")
+	clock.Add(time.Hour)
+	if ids, _ := s.Tick(ctx, e); len(ids) != 0 {
+		t.Fatalf("cancelled schedule still admitted %v", ids)
+	}
+	auto := "auto"
+	later := clock.Now().Add(time.Hour).UnixMilli()
+	s.UpdateSettings(ctx, e, Settings{OpenAt: &later})
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := s.Stats(ctx, e); st.OpenAt != 0 {
+		t.Fatalf("switching to auto kept the schedule: %+v", st)
+	}
+	negative := int64(-1)
+	if err := s.UpdateSettings(ctx, e, Settings{OpenAt: &negative}); err == nil {
+		t.Fatal("negative opening time accepted")
+	}
+}
+
+func TestSchedulingSendsAdmittedUsersBackInOrder(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	if ids, _ := s.Tick(ctx, e); len(ids) != 2 {
+		t.Fatalf("auto admitted %v", ids)
+	}
+	manual := "manual"
+	openAt := clock.Now().Add(time.Hour).UnixMilli()
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &openAt}); err != nil {
+		t.Fatal(err)
+	}
+	// Nobody is inside before opening; the two admitted users are back at the front.
+	for want, id := range map[int64]string{1: "1", 2: "2", 3: "3"} {
+		if v, _ := s.Status(ctx, e, id); v.Status != "waiting" || v.Position != want {
+			t.Fatalf("user %s: %+v", id, v)
+		}
+	}
+	clock.Add(time.Hour)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "1" || ids[1] != "2" {
+		t.Fatalf("admitted at opening %v %v", ids, err)
+	}
+	if st, _ := s.Stats(ctx, e); st.OrderViolations != 0 || st.Active != 2 || st.Waiting != 1 {
+		t.Fatalf("stats %+v", st)
+	}
+}
+
+func TestDoorsStayClosedUntilOpening(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	s.Join(ctx, e, "early")
+	s.Join(ctx, e, "next")
+	if ids, _ := s.Tick(ctx, e); len(ids) != 1 {
+		t.Fatalf("auto admitted %v", ids)
+	}
+	// Schedule directly in Redis, skipping UpdateSettings, as if the admitted
+	// user had slipped in some other way. The next tick must still clear the room.
+	openAt := clock.Now().Add(time.Hour).UnixMilli()
+	s.Client.HSet(ctx, s.keys(e)[7], "mode", "manual", "open_at", openAt)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 0 {
+		t.Fatalf("tick while closed %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "early"); v.Status != "waiting" || v.Position != 1 {
+		t.Fatalf("early user should be back at #1: %+v", v)
+	}
+	// The admit button does nothing before opening.
+	if ids, err := s.Admit(ctx, e, 5); err != nil || len(ids) != 0 {
+		t.Fatalf("admit while closed %v %v", ids, err)
+	}
+	if st, _ := s.Stats(ctx, e); st.Active != 0 || st.Waiting != 2 {
+		t.Fatalf("room not empty before opening %+v", st)
+	}
+	clock.Add(time.Hour)
+	if ids, _ := s.Tick(ctx, e); len(ids) != 1 || ids[0] != "early" {
+		t.Fatalf("opening admitted %v", ids)
+	}
+}
+
+func TestJoinLockedUntilOpening(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	s.Join(ctx, e, "early-bird") // in line before the lock was set
+	manual, lock := "manual", true
+	openAt := clock.Now().Add(time.Minute).UnixMilli()
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &openAt, JoinLock: &lock}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Status(ctx, e, "late")
+	if err != nil || !v.JoinLock || v.OpenAt != openAt || v.Now != clock.Now().UnixMilli() {
+		t.Fatalf("status should carry the lock and server time: %+v %v", v, err)
+	}
+	clock.Add(59 * time.Second)
+	if _, err := s.Join(ctx, e, "late"); err != ErrNotOpen {
+		t.Fatalf("join before opening: %v", err)
+	}
+	// Someone already in line keeps their place and can still poll via join.
+	if v, err := s.Join(ctx, e, "early-bird"); err != nil || v.Position != 1 {
+		t.Fatalf("existing user: %+v %v", v, err)
+	}
+	clock.Add(time.Second)
+	if v, err := s.Join(ctx, e, "late"); err != nil || v.Position != 2 {
+		t.Fatalf("join at opening: %+v %v", v, err)
+	}
+	if ids, _ := s.Tick(ctx, e); len(ids) != 1 || ids[0] != "early-bird" {
+		t.Fatalf("admitted at opening %v", ids)
+	}
+	if st, _ := s.Stats(ctx, e); !st.JoinLock || st.Mode != "auto" {
+		t.Fatalf("stats %+v", st)
+	}
+}
+
+func TestLeaveAllFreesEverySpot(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, _ := setup(t, c)
+	ctx := context.Background()
+	for i := 1; i <= 5; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	s.Tick(ctx, e)
+	if n, err := s.LeaveAll(ctx, e); err != nil || n != 2 {
+		t.Fatalf("removed %d %v", n, err)
+	}
+	if v, _ := s.Status(ctx, e, "1"); v.Status != "absent" {
+		t.Fatalf("removed user still %q", v.Status)
+	}
+	// The next two in line take the freed spots, in order.
+	if ids, _ := s.Tick(ctx, e); len(ids) != 2 || ids[0] != "3" || ids[1] != "4" {
+		t.Fatalf("refill %v", ids)
+	}
+	if n, _ := s.LeaveAll(ctx, e); n != 2 {
+		t.Fatalf("second remove-all %d", n)
+	}
+	if n, _ := s.LeaveAll(ctx, e); n != 0 {
+		t.Fatalf("remove-all on an empty room %d", n)
 	}
 }
 

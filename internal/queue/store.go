@@ -4,8 +4,12 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -38,6 +42,19 @@ type Status struct {
 	Generation           string `json:"generation,omitempty"`
 	ExpiresAt            int64  `json:"expires_at,omitempty"`
 	Token                string `json:"token,omitempty"`
+	Name                 string `json:"name"`
+	Mode                 string `json:"mode"`
+	OpenAt               int64  `json:"open_at"`
+	Badge                string `json:"badge"`
+	JoinLock             bool   `json:"join_lock"`
+	Now                  int64  `json:"now"`
+	MaxPerOrder          int    `json:"max_per_order"`
+	InLine               int64  `json:"in_line"`
+	Inside               int64  `json:"inside"`
+	Remaining            int64  `json:"remaining"`
+	StartsAt             int64  `json:"starts_at"`
+	Venue                string `json:"venue"`
+	Description          string `json:"description"`
 }
 type Store struct {
 	Client *redis.Client
@@ -88,8 +105,16 @@ func (s *Store) status(ctx context.Context, event, action, user string) (Status,
 	err = json.Unmarshal([]byte(raw), &v)
 	return v, err
 }
+
+// ErrNotOpen means joining is locked until the scheduled opening time.
+var ErrNotOpen = errors.New("not open yet")
+
 func (s *Store) Join(ctx context.Context, event, user string) (Status, error) {
-	return s.status(ctx, event, "join", user)
+	v, err := s.status(ctx, event, "join", user)
+	if err != nil && strings.Contains(err.Error(), "NOT_OPEN") {
+		return v, ErrNotOpen
+	}
+	return v, err
 }
 func (s *Store) Status(ctx context.Context, event, user string) (Status, error) {
 	return s.status(ctx, event, "status", user)
@@ -109,11 +134,30 @@ func (s *Store) Leave(ctx context.Context, event, user string) error {
 	return err
 }
 
+// LeaveAll removes every admitted user and reports how many there were.
+func (s *Store) LeaveAll(ctx context.Context, event string) (int, error) {
+	raw, err := s.run(ctx, event, "kick_all", "")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(raw)
+}
+
 // RunWorker deliberately needs no distributed lock. Each Tick is atomic in Redis.
 func (s *Store) RunWorker(ctx context.Context, events []string, interval time.Duration, onError func(error)) {
+	s.RunWorkerFor(ctx, func(context.Context) ([]string, error) { return events, nil }, interval, onError)
+}
+
+// RunWorkerFor ticks every event that list returns, re-reading it each round
+// so events created or deleted from the admin page are picked up.
+func (s *Store) RunWorkerFor(ctx context.Context, list func(context.Context) ([]string, error), interval time.Duration, onError func(error)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
+		events, err := list(ctx)
+		if err != nil && ctx.Err() == nil && onError != nil {
+			onError(err)
+		}
 		for _, event := range events {
 			if _, err := s.Tick(ctx, event); err != nil && ctx.Err() == nil && onError != nil {
 				onError(err)
@@ -133,7 +177,34 @@ func (s *Store) Heartbeat(ctx context.Context, event, user string) (Status, erro
 
 type Reservation struct {
 	ID         string `json:"reservation_id"`
-	Generation string `json:"generation"`
+	Generation string `json:"generation,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
+	Customer
+	Quantity   int   `json:"quantity,omitempty"`
+	ReservedAt int64 `json:"reserved_at,omitempty"`
+}
+
+// Customer is who a ticket is reserved for, entered on the purchase page.
+type Customer struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+}
+
+var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+// Normalize trims the fields and checks they are present and plausible.
+func (c Customer) Normalize() (Customer, error) {
+	c.FirstName, c.LastName, c.Email = strings.TrimSpace(c.FirstName), strings.TrimSpace(c.LastName), strings.TrimSpace(c.Email)
+	switch {
+	case c.FirstName == "" || len([]rune(c.FirstName)) > 100:
+		return c, fmt.Errorf("first name is required (up to 100 characters)")
+	case c.LastName == "" || len([]rune(c.LastName)) > 100:
+		return c, fmt.Errorf("last name is required (up to 100 characters)")
+	case len(c.Email) > 254 || !emailPattern.MatchString(c.Email):
+		return c, fmt.Errorf("a valid email address is required")
+	}
+	return c, nil
 }
 
 func (s *Store) InitEvent(ctx context.Context, event string, tickets int) error {
@@ -145,8 +216,107 @@ func (s *Store) InitEvent(ctx context.Context, event string, tickets int) error 
 	}
 	return s.Client.SetNX(ctx, s.keys(event)[9], tickets, 0).Err()
 }
-func (s *Store) Reserve(ctx context.Context, event, user, generation, id string) (Reservation, error) {
-	raw, err := s.run(ctx, event, "reserve", user, generation, id)
+
+// The event registry lists the events the admin manages, oldest first, and
+// remembers which one the site's root URL opens.
+const (
+	registryKey     = "vwr:events"
+	defaultEventKey = "vwr:default-event"
+)
+
+var (
+	ErrEventExists  = errors.New("an event with that ID already exists")
+	ErrInvalidEvent = errors.New("event ID must be 1 to 64 letters, numbers, - or _")
+)
+
+// SeedEvents registers the given events only when the registry is empty, so
+// events deleted from the admin page do not come back on the next restart.
+func (s *Store) SeedEvents(ctx context.Context, events []string, tickets int) error {
+	n, err := s.Client.ZCard(ctx, registryKey).Result()
+	if err != nil || n > 0 {
+		return err
+	}
+	for _, e := range events {
+		if err := s.CreateEvent(ctx, e, tickets); err != nil && !errors.Is(err, ErrEventExists) {
+			return err
+		}
+	}
+	return nil
+}
+
+// CreateEvent registers a new event with its ticket count.
+func (s *Store) CreateEvent(ctx context.Context, event string, tickets int) error {
+	if !eventPattern.MatchString(event) {
+		return ErrInvalidEvent
+	}
+	added, err := s.Client.ZAddNX(ctx, registryKey, redis.Z{Score: float64(time.Now().UnixMilli()), Member: event}).Result()
+	if err != nil {
+		return err
+	}
+	if added == 0 {
+		return ErrEventExists
+	}
+	return s.InitEvent(ctx, event, tickets)
+}
+
+// Events lists the registered events, oldest first.
+func (s *Store) Events(ctx context.Context) ([]string, error) {
+	return s.Client.ZRange(ctx, registryKey, 0, -1).Result()
+}
+
+func (s *Store) HasEvent(ctx context.Context, event string) (bool, error) {
+	err := s.Client.ZScore(ctx, registryKey, event).Err()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DeleteEvent removes an event and everything stored for it: its line,
+// admissions, settings, inventory and reservations.
+func (s *Store) DeleteEvent(ctx context.Context, event string) error {
+	if !eventPattern.MatchString(event) {
+		return ErrInvalidEvent
+	}
+	if err := s.Client.Del(ctx, s.keys(event)...).Err(); err != nil {
+		return err
+	}
+	if err := s.Client.ZRem(ctx, registryKey, event).Err(); err != nil {
+		return err
+	}
+	if def, _ := s.Client.Get(ctx, defaultEventKey).Result(); def == event {
+		return s.Client.Del(ctx, defaultEventKey).Err()
+	}
+	return nil
+}
+
+// DefaultEvent is the event the root URL opens: the one the admin chose, or
+// else the oldest registered event, or "" if there are none.
+func (s *Store) DefaultEvent(ctx context.Context) (string, error) {
+	if def, err := s.Client.Get(ctx, defaultEventKey).Result(); err == nil {
+		if ok, _ := s.HasEvent(ctx, def); ok {
+			return def, nil
+		}
+	} else if !errors.Is(err, redis.Nil) {
+		return "", err
+	}
+	first, err := s.Client.ZRange(ctx, registryKey, 0, 0).Result()
+	if err != nil || len(first) == 0 {
+		return "", err
+	}
+	return first[0], nil
+}
+
+func (s *Store) SetDefaultEvent(ctx context.Context, event string) error {
+	return s.Client.Set(ctx, defaultEventKey, event, 0).Err()
+}
+
+func (s *Store) Reserve(ctx context.Context, event, user, generation, id string, who Customer, quantity int) (Reservation, error) {
+	who, err := who.Normalize()
+	if err != nil {
+		return Reservation{}, err
+	}
+	raw, err := s.run(ctx, event, "reserve", user, generation, id, who.FirstName, who.LastName, who.Email, quantity)
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -155,16 +325,228 @@ func (s *Store) Reserve(ctx context.Context, event, user, generation, id string)
 	return v, err
 }
 
+// ErrReservationNotFound means the user has no reservation for the event.
+var ErrReservationNotFound = errors.New("reservation not found")
+
+// NormalizeAdmin is the looser check for admin edits: names are still
+// required, but the email is free text so admins can record whatever
+// contact detail they have.
+func (c Customer) NormalizeAdmin() (Customer, error) {
+	c.FirstName, c.LastName, c.Email = strings.TrimSpace(c.FirstName), strings.TrimSpace(c.LastName), strings.TrimSpace(c.Email)
+	switch {
+	case c.FirstName == "" || len([]rune(c.FirstName)) > 100:
+		return c, fmt.Errorf("first name is required (up to 100 characters)")
+	case c.LastName == "" || len([]rune(c.LastName)) > 100:
+		return c, fmt.Errorf("last name is required (up to 100 characters)")
+	case len([]rune(c.Email)) > 254:
+		return c, fmt.Errorf("email must be at most 254 characters")
+	}
+	return c, nil
+}
+
+// UpdateReservation changes who a reservation is for. The ticket itself,
+// its number and time are unchanged.
+func (s *Store) UpdateReservation(ctx context.Context, event, user string, who Customer) (Reservation, error) {
+	who, err := who.NormalizeAdmin()
+	if err != nil {
+		return Reservation{}, err
+	}
+	raw, err := s.run(ctx, event, "edit_reservation", user, who.FirstName, who.LastName, who.Email)
+	if err != nil {
+		if strings.Contains(err.Error(), "NOT_FOUND") {
+			return Reservation{}, ErrReservationNotFound
+		}
+		return Reservation{}, err
+	}
+	var v Reservation
+	err = json.Unmarshal([]byte(raw), &v)
+	v.UserID, v.Generation = user, ""
+	return v, err
+}
+
+// DeleteReservation cancels a reservation and puts its ticket back on sale.
+func (s *Store) DeleteReservation(ctx context.Context, event, user string) error {
+	_, err := s.run(ctx, event, "delete_reservation", user)
+	if err != nil && strings.Contains(err.Error(), "NOT_FOUND") {
+		return ErrReservationNotFound
+	}
+	return err
+}
+
+// Reservations returns every reservation for an event, newest first.
+func (s *Store) Reservations(ctx context.Context, event string) ([]Reservation, error) {
+	if !eventPattern.MatchString(event) {
+		return nil, fmt.Errorf("invalid event")
+	}
+	all, err := s.Client.HGetAll(ctx, s.keys(event)[8]).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Reservation, 0, len(all))
+	for user, raw := range all {
+		var v Reservation
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			return nil, err
+		}
+		v.UserID, v.Generation = user, ""
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ReservedAt > out[j].ReservedAt })
+	return out, nil
+}
+
+// Admit lets up to n users in from the front of the queue, never exceeding the
+// active limit. It is how admins admit users in manual mode.
+func (s *Store) Admit(ctx context.Context, event string, n int) ([]string, error) {
+	if n < 1 || n > 1000 {
+		return nil, fmt.Errorf("invalid admit count")
+	}
+	raw, err := s.run(ctx, event, "admit", "", n)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	err = json.Unmarshal([]byte(raw), &ids)
+	return ids, err
+}
+
+// Settings are the per-event values an admin can change at runtime. Nil
+// fields are left unchanged.
+type Settings struct {
+	ActiveLimit *int    `json:"active_limit"`
+	Name        *string `json:"name"`
+	// Badge is the sale status shown to visitors, such as "Open" or "Closed".
+	Badge     *string `json:"badge"`
+	Remaining *int    `json:"remaining"`
+	Mode      *string `json:"mode"`
+	// OpenAt schedules manual mode to switch to auto admission at this
+	// unix time in milliseconds; 0 cancels the schedule.
+	OpenAt *int64 `json:"open_at"`
+	// JoinLock keeps the join button locked until OpenAt instead of letting
+	// people line up early.
+	JoinLock *bool `json:"join_lock"`
+	// MaxPerOrder caps how many tickets one reservation may take.
+	MaxPerOrder *int `json:"max_per_order"`
+	// Event details shown to visitors. StartsAt is unix ms; 0 clears it.
+	StartsAt    *int64  `json:"starts_at"`
+	Venue       *string `json:"venue"`
+	Description *string `json:"description"`
+}
+
+func (v Settings) Validate() error {
+	switch {
+	case v.ActiveLimit != nil && (*v.ActiveLimit < 1 || *v.ActiveLimit > 100000):
+		return fmt.Errorf("max concurrent users must be between 1 and 100000")
+	case v.Name != nil && len([]rune(*v.Name)) > 80:
+		return fmt.Errorf("ticket name must be at most 80 characters")
+	case v.Badge != nil && len([]rune(strings.TrimSpace(*v.Badge))) > 40:
+		return fmt.Errorf("sale status must be at most 40 characters")
+	case v.Remaining != nil && (*v.Remaining < 0 || *v.Remaining > 10000000):
+		return fmt.Errorf("remaining tickets must be between 0 and 10000000")
+	case v.Mode != nil && *v.Mode != "auto" && *v.Mode != "manual":
+		return fmt.Errorf(`mode must be "auto" or "manual"`)
+	case v.StartsAt != nil && *v.StartsAt < 0:
+		return fmt.Errorf("event date must not be negative")
+	case v.Venue != nil && len([]rune(strings.TrimSpace(*v.Venue))) > 100:
+		return fmt.Errorf("venue must be at most 100 characters")
+	case v.Description != nil && len([]rune(strings.TrimSpace(*v.Description))) > 500:
+		return fmt.Errorf("description must be at most 500 characters")
+	case v.MaxPerOrder != nil && (*v.MaxPerOrder < 1 || *v.MaxPerOrder > 20):
+		return fmt.Errorf("max tickets per order must be between 1 and 20")
+	case v.OpenAt != nil && *v.OpenAt < 0:
+		return fmt.Errorf("opening time must not be negative")
+	}
+	return nil
+}
+
+// UpdateSettings applies the given settings in one transaction. Lowering the
+// limit never evicts anyone; admission simply pauses until occupancy drops.
+// Scheduling an opening sends admitted users back to the front of the line,
+// so nobody is inside before the doors open.
+func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) error {
+	if !eventPattern.MatchString(event) {
+		return fmt.Errorf("invalid event")
+	}
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	// Seed defaults first so a partial update never leaves an event half-configured.
+	if _, err := s.run(ctx, event, "status", ""); err != nil {
+		return err
+	}
+	k := s.keys(event)
+	_, err := s.Client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		if v.ActiveLimit != nil {
+			p.HSet(ctx, k[7], "limit", *v.ActiveLimit)
+		}
+		if v.Name != nil {
+			p.HSet(ctx, k[7], "name", *v.Name)
+		}
+		if v.Badge != nil {
+			p.HSet(ctx, k[7], "badge", strings.TrimSpace(*v.Badge))
+		}
+		if v.Mode != nil {
+			p.HSet(ctx, k[7], "mode", *v.Mode)
+		}
+		if v.Remaining != nil {
+			p.Set(ctx, k[9], *v.Remaining, 0)
+		}
+		if v.StartsAt != nil {
+			p.HSet(ctx, k[7], "starts_at", *v.StartsAt)
+		}
+		if v.Venue != nil {
+			p.HSet(ctx, k[7], "venue", strings.TrimSpace(*v.Venue))
+		}
+		if v.Description != nil {
+			p.HSet(ctx, k[7], "description", strings.TrimSpace(*v.Description))
+		}
+		if v.MaxPerOrder != nil {
+			p.HSet(ctx, k[7], "max_per_order", *v.MaxPerOrder)
+		}
+		if v.JoinLock != nil {
+			lock := "0"
+			if *v.JoinLock {
+				lock = "1"
+			}
+			p.HSet(ctx, k[7], "join_lock", lock)
+		}
+		if v.OpenAt != nil {
+			p.HSet(ctx, k[7], "open_at", *v.OpenAt)
+		} else if v.Mode != nil && *v.Mode == "auto" {
+			// Switching to auto by hand drops any pending schedule, so it
+			// cannot fire unexpectedly after a later switch back to manual.
+			p.HSet(ctx, k[7], "open_at", 0)
+		}
+		return nil
+	})
+	if err == nil && v.OpenAt != nil && *v.OpenAt > 0 {
+		_, err = s.run(ctx, event, "requeue", "")
+	}
+	return err
+}
+
 // Stats is read atomically; peak and FIFO violations are recorded at admission,
 // not sampled, so even transient breaches are observable by the load harness.
 type Stats struct {
-	Active          int64 `json:"active"`
-	Waiting         int64 `json:"waiting"`
-	Admissions      int64 `json:"admissions"`
-	PeakActive      int64 `json:"peak_active"`
-	OrderViolations int64 `json:"order_violations"`
-	WaitTotalMS     int64 `json:"wait_total_ms"`
-	WaitMaxMS       int64 `json:"wait_max_ms"`
+	Active          int64  `json:"active"`
+	Waiting         int64  `json:"waiting"`
+	Admissions      int64  `json:"admissions"`
+	PeakActive      int64  `json:"peak_active"`
+	OrderViolations int64  `json:"order_violations"`
+	WaitTotalMS     int64  `json:"wait_total_ms"`
+	WaitMaxMS       int64  `json:"wait_max_ms"`
+	Remaining       int64  `json:"remaining"`
+	Reserved        int64  `json:"reserved"`
+	ActiveLimit     int64  `json:"active_limit"`
+	Mode            string `json:"mode"`
+	Name            string `json:"name"`
+	OpenAt          int64  `json:"open_at"`
+	Badge           string `json:"badge"`
+	JoinLock        bool   `json:"join_lock"`
+	MaxPerOrder     int    `json:"max_per_order"`
+	StartsAt        int64  `json:"starts_at"`
+	Venue           string `json:"venue"`
+	Description     string `json:"description"`
 }
 
 func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {

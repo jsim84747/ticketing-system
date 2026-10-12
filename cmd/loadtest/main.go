@@ -92,7 +92,7 @@ func run() error {
 		if err = stores[i].InitEvent(ctx, event, *users); err != nil {
 			return err
 		}
-		servers[i] = httptest.NewServer(httpapi.Handler(stores[i], signer, []string{event}))
+		servers[i] = httptest.NewServer(httpapi.Handler(stores[i], signer, []string{event}, ""))
 		defer servers[i].Close()
 	}
 	defer func() {

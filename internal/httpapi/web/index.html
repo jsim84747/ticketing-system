@@ -1,30 +1,36 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ticketing — 가상 대기실</title>
+<title>Ticketing — Virtual Waiting Room</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/app.js" defer></script>
 </head>
 <body>
 <header><a href="/" class="brand">ticketing<span>●</span></a><span class="tag">LIVE DEMO / VIRTUAL WAITING ROOM</span></header>
 <main>
-<section class="intro"><p class="eyebrow">좋은 순간을 기다리는 시간</p><h1>당신의 차례가<br>다가오고 있어요.</h1><p class="sub">입장 순서는 공정하게, 기다리는 시간은 명확하게.<br>이 페이지를 열어두면 순번을 자동으로 알려드려요.</p>
-<div class="event"><span class="event-icon">T</span><div><strong>THE NEXT STAGE</strong><p>온라인 티켓 예매 · <span id="event-id">demo</span></p></div><span class="pill">예매 오픈</span></div>
-<div class="note"><span>01</span><p>대기실 입장</p><i>→</i><span>02</span><p>순서대로 입장</p><i>→</i><span>03</span><p>티켓 구매</p></div>
+<section class="intro"><p class="eyebrow">THE MOMENT IS WORTH THE WAIT</p><h1>Your turn<br>is coming up.</h1><p class="sub" id="sub">A fair order for everyone, and a clear view of your wait.<br>Keep this page open and we'll update your place in line automatically.</p>
+<div class="event"><span class="event-icon" id="event-icon">T</span><div><strong class="ticket-name">THE NEXT STAGE</strong><p><span id="event-meta">Online ticket sale</span><span id="left-line"></span></p></div><span class="pill" id="badge">Open</span></div>
+<div class="note"><span>01</span><p>Join the line</p><i>→</i><span>02</span><p>Get admitted</p><i>→</i><span>03</span><p>Buy your ticket</p></div>
 </section>
 <section class="room" aria-labelledby="room-title">
-<div class="room-top"><span class="live-dot"></span><span id="room-title">가상 대기실</span><span id="connection">연결 준비 중</span></div>
-<div id="waiting-view"><p id="caption" class="caption">준비가 되셨나요?</p><div class="number"><span id="position">—</span><small id="unit">번</small></div><p id="detail">대기실에 입장해 순번을 받아보세요.</p>
-<div class="progress-label"><span>내 순번 진행률</span><span id="progress-text">0%</span></div><progress id="progress" value="0" max="100" aria-label="대기 순번 진행률"></progress>
-<div class="stats"><div><span>내 앞 대기 인원</span><strong id="ahead">—</strong></div><div><span>예상 대기 시간</span><strong id="eta">계산 중</strong></div></div>
-<button id="join" class="primary">대기실 입장하기 <span>→</span></button></div>
-<div id="purchase-view" hidden><div class="success-mark">✓</div><h2>입장이 완료되었어요.</h2><p>이제 티켓을 구매할 수 있어요.</p><div class="ticket"><span>THE NEXT STAGE</span><strong>일반 입장권 · 1매</strong><small>데모 예약입니다. 실제 결제는 발생하지 않습니다.</small></div><p class="expiry">입장 유효 시간: <span id="expires">—</span></p><button id="buy" class="primary">티켓 예약하기 <span>→</span></button></div>
-<div id="complete-view" hidden><div class="success-mark">✓</div><h2>예약이 완료되었어요!</h2><p>입장 자리는 다음 분께 전달됩니다.</p><code id="reservation"></code></div>
-<p id="message" role="status" aria-live="polite"></p><button id="leave" class="secondary" hidden>대기 / 예매 나가기</button>
-<div class="room-footer"><span>↻</span> <span id="transport-label">2초마다 순번을 확인합니다</span></div>
+<div class="room-top"><span class="live-dot"></span><span id="room-title">Waiting room</span><span id="connection">Connecting</span></div>
+<div id="waiting-view"><p id="caption" class="caption">Ready to go?</p><div class="number"><span id="position">—</span><small id="unit">in line</small></div><p id="detail">Join the waiting room to get your place in line.</p>
+<div class="progress-label"><span>Your progress</span><span id="progress-text">0%</span></div><progress id="progress" value="0" max="100" aria-label="Queue progress"></progress>
+<div class="stats"><div><span>Ahead of you</span><strong id="ahead">—</strong></div><div><span>Est. wait</span><strong id="eta">Calculating</strong></div><div><span>Tickets left</span><strong id="left">—</strong></div></div>
+<button id="join" class="primary">Join the waiting room <span>→</span></button></div>
+<div id="purchase-view" hidden><div class="success-mark">✓</div><h2>You're in!</h2><p>You can buy your ticket now.</p><div class="ticket"><span class="ticket-name">THE NEXT STAGE</span><strong>General Admission · <span id="qty-label">1 ticket</span></strong><small class="price">Free</small></div><p class="expiry">Your spot is held until <span id="expires">—</span></p>
+<form id="buyer" class="buyer">
+<label>Tickets<select id="quantity" aria-label="Number of tickets"><option value="1">1</option></select></label>
+<div class="buyer-row"><label>First name<input id="first-name" autocomplete="given-name" maxlength="100" required></label><label>Last name<input id="last-name" autocomplete="family-name" maxlength="100" required></label></div>
+<label>Email address<input id="email" type="email" autocomplete="email" maxlength="254" required></label>
+<button id="buy" class="primary" type="submit">Reserve my ticket <span>→</span></button>
+</form></div>
+<div id="complete-view" hidden><div class="success-mark">✓</div><h2>Your ticket is reserved!</h2><p id="reserved-for">Your spot has been passed to the next person in line.</p><code id="reservation"></code></div>
+<p id="message" role="status" aria-live="polite"></p><button id="leave" class="secondary" hidden>Leave the line</button>
+<div class="room-footer"><span>↻</span> <span id="transport-label">Checking your place every second</span></div>
 </section>
-<section class="testing"><div><strong>직접 테스트해 보세요</strong><p>새 탭은 새 사용자, 새로고침은 같은 사용자입니다.</p></div><a href="/" target="_blank" rel="noopener noreferrer" id="new-tab">새 사용자 탭 ↗</a><a id="mode" href="/?transport=sse">SSE 모드</a><button id="new-user">사용자 바꾸기</button><label><input type="checkbox" id="pause"> heartbeat 중단</label></section>
+<section class="testing" id="testing" hidden><div><strong>Try it yourself</strong><p>A new tab is a new user; refreshing keeps the same user.</p></div><a href="/" target="_blank" rel="noopener noreferrer" id="new-tab">New user tab ↗</a><a id="mode" href="/?transport=sse">SSE mode</a><button id="new-user">Switch user</button><label><input type="checkbox" id="pause"> Pause heartbeat</label></section>
 </main>
-<footer><span>Redis + Go · 선착순 입장</span><span id="user-id">사용자 준비 중</span></footer>
+<footer><span>Redis + Go · First come, first served</span><span id="user-id">Preparing user</span></footer>
 </body></html>
