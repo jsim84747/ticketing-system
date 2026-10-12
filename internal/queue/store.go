@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -136,7 +138,33 @@ func (s *Store) Heartbeat(ctx context.Context, event, user string) (Status, erro
 
 type Reservation struct {
 	ID         string `json:"reservation_id"`
-	Generation string `json:"generation"`
+	Generation string `json:"generation,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
+	Customer
+	ReservedAt int64 `json:"reserved_at,omitempty"`
+}
+
+// Customer is who a ticket is reserved for, entered on the purchase page.
+type Customer struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+}
+
+var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+// Normalize trims the fields and checks they are present and plausible.
+func (c Customer) Normalize() (Customer, error) {
+	c.FirstName, c.LastName, c.Email = strings.TrimSpace(c.FirstName), strings.TrimSpace(c.LastName), strings.TrimSpace(c.Email)
+	switch {
+	case c.FirstName == "" || len([]rune(c.FirstName)) > 100:
+		return c, fmt.Errorf("first name is required (up to 100 characters)")
+	case c.LastName == "" || len([]rune(c.LastName)) > 100:
+		return c, fmt.Errorf("last name is required (up to 100 characters)")
+	case len(c.Email) > 254 || !emailPattern.MatchString(c.Email):
+		return c, fmt.Errorf("a valid email address is required")
+	}
+	return c, nil
 }
 
 func (s *Store) InitEvent(ctx context.Context, event string, tickets int) error {
@@ -148,14 +176,40 @@ func (s *Store) InitEvent(ctx context.Context, event string, tickets int) error 
 	}
 	return s.Client.SetNX(ctx, s.keys(event)[9], tickets, 0).Err()
 }
-func (s *Store) Reserve(ctx context.Context, event, user, generation, id string) (Reservation, error) {
-	raw, err := s.run(ctx, event, "reserve", user, generation, id)
+func (s *Store) Reserve(ctx context.Context, event, user, generation, id string, who Customer) (Reservation, error) {
+	who, err := who.Normalize()
+	if err != nil {
+		return Reservation{}, err
+	}
+	raw, err := s.run(ctx, event, "reserve", user, generation, id, who.FirstName, who.LastName, who.Email)
 	if err != nil {
 		return Reservation{}, err
 	}
 	var v Reservation
 	err = json.Unmarshal([]byte(raw), &v)
 	return v, err
+}
+
+// Reservations returns every reservation for an event, newest first.
+func (s *Store) Reservations(ctx context.Context, event string) ([]Reservation, error) {
+	if !eventPattern.MatchString(event) {
+		return nil, fmt.Errorf("invalid event")
+	}
+	all, err := s.Client.HGetAll(ctx, s.keys(event)[8]).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Reservation, 0, len(all))
+	for user, raw := range all {
+		var v Reservation
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			return nil, err
+		}
+		v.UserID, v.Generation = user, ""
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ReservedAt > out[j].ReservedAt })
+	return out, nil
 }
 
 // Admit lets up to n users in from the front of the queue, never exceeding the

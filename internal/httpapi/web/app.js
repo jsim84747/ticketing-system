@@ -12,8 +12,8 @@ $('new-tab').href = `/?event=${encodeURIComponent(eventID)}&debug=1`;
 let session = sessionStorage.getItem('session'), state = 'absent', admission = '', busy = false;
 let initial = Number(sessionStorage.getItem(`initial:${eventID}`)) || 0;
 let pollTimer, beatTimer, revision = 0, openAt = 0, mode = 'auto';
-async function api(path, method = 'GET', extra = {}) {
-  const response = await fetch(path, {method, headers: {...(session ? {Authorization: `Bearer ${session}`} : {}), ...extra}, signal: AbortSignal.timeout(7000)});
+async function api(path, method = 'GET', extra = {}, body) {
+  const response = await fetch(path, {method, headers: {...(session ? {Authorization: `Bearer ${session}`} : {}), ...(body ? {'Content-Type': 'application/json'} : {}), ...extra}, body: body && JSON.stringify(body), signal: AbortSignal.timeout(7000)});
   const data = response.status === 204 ? {} : await response.json();
   if (!response.ok) {
     if (response.status === 401) { sessionStorage.removeItem('session'); $('message').textContent = 'Your session expired. Click "Switch user" to start again.'; }
@@ -55,6 +55,7 @@ function render(v) {
     $('message').textContent = $('pause').checked ? 'Heartbeat paused. Your spot will expire in 30 seconds.' : 'Checking your connection every 10 seconds.';
   } else if (state === 'completed') {
     $('reservation').textContent = `Reservation number: ${v.reservation_id}`; $('message').textContent = '';
+    if (v.email) $('reserved-for').textContent = `Reserved for ${v.first_name} ${v.last_name}. We'll use ${v.email} to reach you.`;
   } else {
     initial = 0; sessionStorage.removeItem(`initial:${eventID}`); $('position').textContent = '—'; $('ahead').textContent = '—'; $('eta').textContent = 'Calculating'; $('progress').value = 0; $('progress-text').textContent = '0%';
     $('caption').textContent = state === 'expired' ? 'Your spot expired' : 'Not in line yet';
@@ -101,7 +102,11 @@ async function act(button, fn) {
 }
 $('join').onclick = () => act($('join'), async () => render(await api(`${base}/queue`, 'POST')));
 $('leave').onclick = () => act($('leave'), async () => { await api(`${base}/queue/leave`, 'POST'); render({status: 'absent'}); });
-$('buy').onclick = () => act($('buy'), async () => { const v = await api(`${base}/reserve`, 'POST', {'X-Admission-Token': admission}); render({status: 'completed', ...v}); });
+$('buyer').onsubmit = e => {
+  e.preventDefault();
+  const details = {first_name: $('first-name').value.trim(), last_name: $('last-name').value.trim(), email: $('email').value.trim()};
+  act($('buy'), async () => { const v = await api(`${base}/reserve`, 'POST', {'X-Admission-Token': admission}, details); render({status: 'completed', ...v}); });
+};
 $('new-user').onclick = () => act($('new-user'), async () => {
   if (session) { try { await api(`${base}/queue/leave`, 'POST'); } catch (e) { if (!e.message.includes('session')) throw e; } }
   sessionStorage.clear(); location.reload();

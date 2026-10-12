@@ -148,7 +148,8 @@ if action == 'reserve' then
   end
   local remaining = tonumber(redis.call('GET',stock) or '0')
   if remaining <= 0 then return redis.error_reply('SOLD_OUT') end
-  local result = cjson.encode({reservation_id=ARGV[8],generation=ARGV[7]})
+  local result = cjson.encode({reservation_id=ARGV[8],generation=ARGV[7],
+    first_name=ARGV[9],last_name=ARGV[10],email=ARGV[11],reserved_at=now})
   redis.call('DECR',stock)
   redis.call('HSET',reservations,user,result)
   remove(user)

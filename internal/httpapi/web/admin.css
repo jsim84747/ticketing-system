@@ -25,6 +25,9 @@
 .users th{text-align:left;color:#798679;font-weight:400;font-size:11px;padding:12px 0}
 .users td{border-top:1px solid #edf0e8;padding:10px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .users td:last-child{text-align:right;width:90px}
+#reservations td:last-child{width:auto;text-align:left;font-size:11px;color:#6a796e}
+.users{margin-top:14px}
+.room-top .csv{width:auto;padding:7px 12px;margin-left:12px;font-size:11px}
 .users td button{border:1px solid #e3cfc6;border-radius:7px;background:#fff;color:#8a4b3a;padding:6px 10px;font-size:11px}
 @media(max-width:860px){.admin{padding:24px}.cards{grid-template-columns:repeat(2,1fr)}.toolbar .updated{margin-left:0;width:100%}}
 .capacity-top{display:flex;align-items:center;justify-content:space-between}

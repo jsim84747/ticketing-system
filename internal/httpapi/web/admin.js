@@ -89,11 +89,37 @@ function renderUsers(v) {
     action.append(button); row.append(cell, action); return row;
   }));
 }
+const fullName = v => [v.first_name, v.last_name].filter(Boolean).join(' ') || '—';
+const when = ms => ms ? new Date(ms).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'medium'}) : '—';
+function renderReservations(v) {
+  $('res-count').textContent = v.total > v.reservations.length ? `newest ${v.reservations.length} of ${num(v.total)}` : num(v.total);
+  $('res-empty').hidden = v.total > 0;
+  $('reservations').replaceChildren(...v.reservations.map(r => {
+    const row = document.createElement('tr');
+    for (const text of [fullName(r), r.email || '—', when(r.reserved_at), r.reservation_id]) {
+      const cell = document.createElement('td'); cell.textContent = text; row.append(cell);
+    }
+    return row;
+  }));
+}
+// Quote every field, and neutralize values a spreadsheet would run as a formula.
+const csvCell = value => { let s = String(value ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
+$('csv').onclick = async () => {
+  try {
+    const v = await api(`/admin/api/events/${encodeURIComponent(selected())}/reservations`);
+    const rows = [['First name', 'Last name', 'Email', 'Reserved at', 'Reservation number', 'User ID'],
+      ...v.reservations.map(r => [r.first_name, r.last_name, r.email, r.reserved_at ? new Date(r.reserved_at).toISOString() : '', r.reservation_id, r.user_id])];
+    const blob = new Blob([rows.map(r => r.map(csvCell).join(',')).join('\r\n')], {type: 'text/csv'});
+    const link = Object.assign(document.createElement('a'), {href: URL.createObjectURL(blob), download: `reservations-${selected()}.csv`});
+    link.click(); URL.revokeObjectURL(link.href);
+  } catch (err) { $('message').textContent = `Couldn't download reservations: ${err.message}`; }
+};
 async function refresh() {
   clearTimeout(timer);
   try {
     renderEvents(await api('/admin/api/events'));
     renderUsers(await api(`/admin/api/events/${encodeURIComponent(selected())}/active`));
+    renderReservations(await api(`/admin/api/events/${encodeURIComponent(selected())}/reservations?limit=100`));
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString('en-US')}`; $('message').textContent = '';
   } catch (e) {
     if (!token) return;

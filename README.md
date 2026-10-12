@@ -58,6 +58,7 @@ Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event con
 
 - **User page** (`/`): the waiting room only. The root URL opens the first event in `EVENT_IDS`; other events are reachable with `/?event=<id>`. Developer test tools (new user tab, SSE toggle, stop heartbeat) are hidden unless the URL has `&debug=1`.
 - **Admin page** (`/admin`): log in with `ADMIN_TOKEN` to see live occupancy against capacity, queue length, remaining tickets, reservations, peak occupancy, FIFO violations and wait times, refreshed every 2 seconds. Admins can remove an admitted user, and the slot passes to the next user in line. It also links to a test user tab with the debug tools enabled.
+- **Reservations**: the purchase form asks for first name, last name and email. They are validated on the server and saved with the reservation in the same atomic step that takes the ticket, so invalid details never use up a ticket. The admin page lists reservations and can download them as CSV (fields that a spreadsheet would treat as formulas are escaped). This is personal data: it lives only in Redis, which the demo stores under `.tools/` (not committed to Git).
 - **Event settings**: the admin page edits the ticket name shown to users, the maximum number of concurrent users, and the remaining ticket count. Changes apply immediately on every server. Lowering the limit never evicts anyone; admission pauses until occupancy falls below the new limit.
 - **Auto and manual mode**: in auto mode the worker admits the next user whenever a spot opens. In manual mode the worker still expires stale and overstayed users but admits no one; the admin admits the next N users with a button, still in FIFO order and capped by the limit. Users in manual mode see "Set by organizer" instead of an estimated wait.
 - **Scheduled opening**: in manual mode the admin can set an opening time. Users can join the line early but nobody is admitted before then; the first worker tick at or after that time (judged by the Redis clock) switches the event to auto mode, and admission starts in FIFO order. Waiting users see a countdown. While an opening is scheduled the doors are closed: every worker tick sends anyone who is admitted back to the front of the line in their original order, and the admit button is disabled, so nobody is inside before the doors open. Switching to auto by hand cancels a pending schedule. The admin enters the time in their computer's time zone (shown on the page); it is stored as an absolute instant, and each visitor sees it converted to their own time zone, with the zone named.
@@ -133,10 +134,11 @@ First, call `POST /session` to obtain `{user_id, session_token}`, then send `Aut
 | GET | `/events/{id}/queue/stream` | `event: status` SSE, current state every 2 seconds |
 | POST | `/events/{id}/queue/heartbeat` | Renew admission lease and return current state |
 | POST | `/events/{id}/queue/leave` | Idempotent departure, HTTP 204 |
-| POST | `/events/{id}/reserve` | Requires `X-Admission-Token`, returns reservation ID |
+| POST | `/events/{id}/reserve` | Requires `X-Admission-Token` and `{"first_name", "last_name", "email"}`; returns the reservation ID and details |
 | GET | `/healthz` | Redis connectivity status |
 | GET | `/admin/api/events` | Admin: per-event occupancy, queue length, inventory and wait metrics |
 | GET | `/admin/api/events/{id}/active` | Admin: admitted user IDs (first 100) and total |
+| GET | `/admin/api/events/{id}/reservations` | Admin: reservations with name, email and time, newest first; `?limit=N` returns only the newest N |
 | POST | `/admin/api/events/{id}/settings` | Admin: any of `{"name", "active_limit", "remaining", "mode": "auto" \| "manual", "open_at": <unix ms, 0 cancels>}` |
 | POST | `/admin/api/events/{id}/admit` | Admin: `{"count": N}` admits up to N users from the front of the queue (1–1000) |
 | POST | `/admin/api/events/{id}/kick` | Admin: `{"user_id": "..."}` removes a user so the next in line is admitted |

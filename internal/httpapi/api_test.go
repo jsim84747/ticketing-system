@@ -47,7 +47,11 @@ func TestReservationSecurityAndInventory(t *testing.T) {
 	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), clock.Now)
 	h := Handler(q, signer, []string{event, "other"}, "")
 	call := func(method, path, session, admission string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, nil)
+		body := ""
+		if strings.HasSuffix(path, "/reserve") {
+			body = `{"first_name":"Jiwon","last_name":"Shim","email":"jiwon@example.com"}`
+		}
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if session != "" {
 			req.Header.Set("Authorization", "Bearer "+session)
 		}
@@ -320,5 +324,79 @@ func TestAdminAPI(t *testing.T) {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("events missing %s: %s", want, w.Body.String())
 		}
+	}
+}
+
+func TestReservationDetailsAndAdminList(t *testing.T) {
+	ctx := context.Background()
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:16379"
+	}
+	r := redis.NewClient(&redis.Options{Addr: addr})
+	defer r.Close()
+	cfg := queue.DefaultConfig()
+	cfg.ActiveLimit = 1
+	q, err := queue.New(r, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := fmt.Sprintf("http-details-%d", time.Now().UnixNano())
+	if err := q.InitEvent(ctx, event, 5); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		keys, _ := r.Keys(ctx, "vwr:{"+event+"}:*").Result()
+		if len(keys) > 0 {
+			r.Del(ctx, keys...)
+		}
+	}()
+	signer, _ := auth.New([]byte(strings.Repeat("k", 32)), nil)
+	h := Handler(q, signer, []string{event}, "admin-secret")
+	call := func(method, path, bearer, admission, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		if admission != "" {
+			req.Header.Set("X-Admission-Token", admission)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	user, session, _ := signer.Session()
+	base := "/events/" + event
+	call("POST", base+"/queue", session, "", "")
+	q.Tick(ctx, event)
+	var st queue.Status
+	json.Unmarshal(call("GET", base+"/queue/status", session, "", "").Body.Bytes(), &st)
+	if st.Token == "" {
+		t.Fatalf("not admitted: %+v", st)
+	}
+	for _, bad := range []string{``, `{}`, `{"first_name":"Jiwon","last_name":"Shim","email":"not-an-email"}`, `{"first_name":" ","last_name":"Shim","email":"a@b.co"}`} {
+		if w := call("POST", base+"/reserve", session, st.Token, bad); w.Code != 400 {
+			t.Fatalf("details %q: want 400 got %d %s", bad, w.Code, w.Body.String())
+		}
+	}
+	if n := r.Get(ctx, "vwr:{"+event+"}:stock").Val(); n != "5" {
+		t.Fatalf("rejected details must not use a ticket, stock %s", n)
+	}
+	w := call("POST", base+"/reserve", session, st.Token, `{"first_name":" Jiwon ","last_name":"Shim","email":"jiwon@example.com"}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"first_name":"Jiwon"`) {
+		t.Fatalf("reserve: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("GET", "/admin/api/events/"+event+"/reservations", "wrong", "", ""); w.Code != 401 {
+		t.Fatalf("reservations without admin password: %d", w.Code)
+	}
+	w = call("GET", "/admin/api/events/"+event+"/reservations", "admin-secret", "", "")
+	for _, want := range []string{`"total":1`, `"user_id":"` + user + `"`, `"first_name":"Jiwon"`, `"last_name":"Shim"`, `"email":"jiwon@example.com"`, `"reserved_at":`} {
+		if w.Code != 200 || !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("reservations missing %s: %d %s", want, w.Code, w.Body.String())
+		}
+	}
+	if w := call("GET", "/admin/api/events/"+event+"/reservations?limit=1", "admin-secret", "", ""); !strings.Contains(w.Body.String(), `"total":1`) {
+		t.Fatalf("limited reservations: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"generation"`) {
+		t.Fatalf("reservations leak the admission generation: %s", w.Body.String())
 	}
 }

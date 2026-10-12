@@ -10,6 +10,7 @@ import (
 	"html"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -126,6 +127,19 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			return
 		}
 		respond(w, 200, map[string]int{"admitted": len(ids)})
+	}))
+	m.HandleFunc("GET /admin/api/events/{id}/reservations", admin(func(w http.ResponseWriter, r *http.Request) {
+		list, err := q.Reservations(r.Context(), r.PathValue("id"))
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		total := len(list)
+		// ?limit=N returns only the newest N, for the dashboard's live table.
+		if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n < total {
+			list = list[:n]
+		}
+		respond(w, 200, map[string]any{"total": total, "reservations": list})
 	}))
 	m.HandleFunc("POST /admin/api/events/{id}/kick", admin(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -247,12 +261,21 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 			problem(w, 403, "valid admission token required")
 			return
 		}
+		var who queue.Customer
+		if err := json.NewDecoder(r.Body).Decode(&who); err != nil {
+			problem(w, 400, "first name, last name and email are required")
+			return
+		}
+		if who, err = who.Normalize(); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
 		id, err := auth.ID()
 		if err != nil {
 			problem(w, 500, "reservation unavailable")
 			return
 		}
-		v, err := q.Reserve(r.Context(), event, user, c.Generation, id)
+		v, err := q.Reserve(r.Context(), event, user, c.Generation, id, who)
 		if err != nil {
 			switch strings.TrimPrefix(err.Error(), "ERR ") {
 			case "NOT_ADMITTED":

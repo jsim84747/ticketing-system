@@ -19,8 +19,13 @@
 <div class="progress-label"><span>Your progress</span><span id="progress-text">0%</span></div><progress id="progress" value="0" max="100" aria-label="Queue progress"></progress>
 <div class="stats"><div><span>People ahead of you</span><strong id="ahead">—</strong></div><div><span>Estimated wait</span><strong id="eta">Calculating</strong></div></div>
 <button id="join" class="primary">Join the waiting room <span>→</span></button></div>
-<div id="purchase-view" hidden><div class="success-mark">✓</div><h2>You're in!</h2><p>You can buy your ticket now.</p><div class="ticket"><span class="ticket-name">THE NEXT STAGE</span><strong>General Admission · 1 ticket</strong><small>This is a demo reservation. No payment is taken.</small></div><p class="expiry">Your spot is held until <span id="expires">—</span></p><button id="buy" class="primary">Reserve my ticket <span>→</span></button></div>
-<div id="complete-view" hidden><div class="success-mark">✓</div><h2>Your ticket is reserved!</h2><p>Your spot has been passed to the next person in line.</p><code id="reservation"></code></div>
+<div id="purchase-view" hidden><div class="success-mark">✓</div><h2>You're in!</h2><p>You can buy your ticket now.</p><div class="ticket"><span class="ticket-name">THE NEXT STAGE</span><strong>General Admission · 1 ticket</strong><small>This is a demo reservation. No payment is taken.</small></div><p class="expiry">Your spot is held until <span id="expires">—</span></p>
+<form id="buyer" class="buyer">
+<div class="buyer-row"><label>First name<input id="first-name" autocomplete="given-name" maxlength="100" required></label><label>Last name<input id="last-name" autocomplete="family-name" maxlength="100" required></label></div>
+<label>Email address<input id="email" type="email" autocomplete="email" maxlength="254" required></label>
+<button id="buy" class="primary" type="submit">Reserve my ticket <span>→</span></button>
+</form></div>
+<div id="complete-view" hidden><div class="success-mark">✓</div><h2>Your ticket is reserved!</h2><p id="reserved-for">Your spot has been passed to the next person in line.</p><code id="reservation"></code></div>
 <p id="message" role="status" aria-live="polite"></p><button id="leave" class="secondary" hidden>Leave the line</button>
 <div class="room-footer"><span>↻</span> <span id="transport-label">Checking your place every 2 seconds</span></div>
 </section>
