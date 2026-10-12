@@ -386,6 +386,33 @@ func TestJoinLockedUntilOpening(t *testing.T) {
 	}
 }
 
+func TestLeaveAllFreesEverySpot(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, _ := setup(t, c)
+	ctx := context.Background()
+	for i := 1; i <= 5; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	s.Tick(ctx, e)
+	if n, err := s.LeaveAll(ctx, e); err != nil || n != 2 {
+		t.Fatalf("removed %d %v", n, err)
+	}
+	if v, _ := s.Status(ctx, e, "1"); v.Status != "absent" {
+		t.Fatalf("removed user still %q", v.Status)
+	}
+	// The next two in line take the freed spots, in order.
+	if ids, _ := s.Tick(ctx, e); len(ids) != 2 || ids[0] != "3" || ids[1] != "4" {
+		t.Fatalf("refill %v", ids)
+	}
+	if n, _ := s.LeaveAll(ctx, e); n != 2 {
+		t.Fatalf("second remove-all %d", n)
+	}
+	if n, _ := s.LeaveAll(ctx, e); n != 0 {
+		t.Fatalf("remove-all on an empty room %d", n)
+	}
+}
+
 func TestHeartbeatExpiryAndMaxStay(t *testing.T) {
 	c := DefaultConfig()
 	c.ActiveLimit = 2

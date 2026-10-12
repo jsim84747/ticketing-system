@@ -283,6 +283,9 @@ func TestAdminAPI(t *testing.T) {
 		t.Fatalf("active: %s", w.Body.String())
 	}
 
+	if w := call(h, "POST", "/admin/api/events/"+event+"/kick-all", "", ""); w.Code != 401 {
+		t.Fatalf("kick-all without admin password: %d", w.Code)
+	}
 	// Kicking the admitted user frees the slot for the next one in line.
 	assertCode(call(h, "POST", "/admin/api/events/"+event+"/kick", "admin-secret", `{}`), 400)
 	assertCode(call(h, "POST", "/admin/api/events/"+event+"/kick", "admin-secret", `{"user_id":"first"}`), 204)

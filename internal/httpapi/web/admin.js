@@ -233,4 +233,13 @@ $('users').onclick = async e => {
   try { await post('kick', {user_id: id}); refresh(); }
   catch (err) { $('message').textContent = `Couldn't remove user: ${err.message}`; e.target.disabled = false; }
 };
+$('kick-all').onclick = async () => {
+  const e = current(), n = e ? e.active : 0;
+  if (!n) { flash('users-message', 'No one is admitted right now.', false); return; }
+  if (!confirm(`Remove all ${n} admitted ${n === 1 ? 'user' : 'users'}? Their spots go to the next people in line.`)) return;
+  $('kick-all').disabled = true;
+  try { const v = await post('kick-all'); flash('users-message', `Removed ${v.removed} ${v.removed === 1 ? 'user' : 'users'}. Their spots went to the next people in line.`); refresh(); }
+  catch (err) { flash('users-message', `Couldn't remove users: ${err.message}`, false); }
+  finally { $('kick-all').disabled = false; }
+};
 if (token) show();

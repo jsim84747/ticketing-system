@@ -100,9 +100,10 @@
 </div>
 
 <div class="room users">
-<div class="room-top"><span class="live-dot"></span><span>Admitted users</span><span id="users-count" class="users-count"></span></div>
+<div class="room-top"><span class="live-dot"></span><span>Admitted users</span><span id="users-count" class="users-count"></span><button id="kick-all" class="secondary csv danger" type="button">Remove all</button></div>
 <table><thead><tr><th>User ID</th><th></th></tr></thead><tbody id="users"></tbody></table>
 <p id="users-empty" class="admin-message">No one is admitted right now.</p>
+<p id="users-message" class="admin-message" role="status" aria-live="polite"></p>
 </div>
 <div class="room users">
 <div class="room-top"><span class="live-dot"></span><span>Reservations</span><span id="res-count" class="users-count"></span><button id="csv" class="secondary csv" type="button">Download CSV</button></div>

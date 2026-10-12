@@ -139,6 +139,13 @@ if action == 'tick' or action == 'admit' then
   if #admitted == 0 then return '[]' end
   return cjson.encode(admitted)
 end
+-- Admins remove everyone currently admitted at once; their spots go to the
+-- next people in line on the following worker tick (or the admit button).
+if action == 'kick_all' then
+  local ids = redis.call('ZRANGE',active,0,-1)
+  for _,id in ipairs(ids) do remove(id) end
+  return tostring(#ids)
+end
 if action == 'leave' then
   remove(user)
   redis.call('ZREM',waiting,user)

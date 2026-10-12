@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,6 +129,15 @@ func (s *Store) Tick(ctx context.Context, event string) ([]string, error) {
 func (s *Store) Leave(ctx context.Context, event, user string) error {
 	_, err := s.run(ctx, event, "leave", user)
 	return err
+}
+
+// LeaveAll removes every admitted user and reports how many there were.
+func (s *Store) LeaveAll(ctx context.Context, event string) (int, error) {
+	raw, err := s.run(ctx, event, "kick_all", "")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(raw)
 }
 
 // RunWorker deliberately needs no distributed lock. Each Tick is atomic in Redis.

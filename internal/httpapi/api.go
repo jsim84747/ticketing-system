@@ -175,6 +175,14 @@ func Handler(q *queue.Store, signer *auth.Signer, events []string, adminToken st
 		}
 		w.WriteHeader(204)
 	}))
+	m.HandleFunc("POST /admin/api/events/{id}/kick-all", admin(func(w http.ResponseWriter, r *http.Request) {
+		n, err := q.LeaveAll(r.Context(), r.PathValue("id"))
+		if err != nil {
+			problem(w, 503, "queue unavailable")
+			return
+		}
+		respond(w, 200, map[string]int{"removed": n})
+	}))
 	m.HandleFunc("POST /admin/api/events/{id}/kick", admin(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			UserID string `json:"user_id"`
