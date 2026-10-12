@@ -1,259 +1,255 @@
-# Ticketing System · Virtual Waiting Room
+Ticketing System · Virtual Waiting Room
 
-Go + Redis로 구현한 티켓 예매 데모입니다. **공연별 최대 1,000명**만 구매 페이지에 입장하고, 나머지는 FIFO 대기열에 머뭅니다. 정원, heartbeat 만료, 최대 체류 시간은 설정 가능합니다.
+A ticket-booking demo implemented in Go + Redis. Only **up to 1,000 users per event** can enter the purchase page; everyone else remains in a FIFO queue. Capacity, heartbeat expiration, and maximum stay duration are configurable.
 
-정적 HTML/JS 대기 화면, HMAC 입장 토큰, 중복 예약 방지, 실 Redis 통합 테스트와 10,000명 HTTP 부하 테스트가 포함됩니다. 실제 결제·좌석 선택·회원 로그인은 구현 범위에 포함되지 않습니다.
+Includes a static HTML/JS waiting screen, HMAC admission tokens, duplicate reservation prevention, integration tests against real Redis, and an HTTP load test with 10,000 users. Actual payment processing, seat selection, and member login are outside the implementation scope.
 
-## 바로 실행하기
+## Quick Start
 
-### 현재 작업 폴더에서
+### In the Current Working Directory
 
-이 작업 환경에는 Go와 Redis를 `.tools/`에 준비했습니다. 해당 폴더는 Git에 포함되지 않습니다.
+Go and Redis have been prepared in `.tools/` in this workspace. This directory is not included in Git.
 
 ```sh
 ./scripts/demo.sh
 ```
 
-[데모 열기](http://127.0.0.1:8080/?event=demo-2). 데모 스크립트는 정원을 **2명**으로 설정하므로 탭 3개만으로 대기를 확인할 수 있습니다. 서버 설정 기본값은 1,000명입니다. 이미 8080 포트를 사용 중이면 기존 서버를 종료하거나 `HTTP_ADDR=127.0.0.1:8081 ./scripts/demo.sh`로 실행합니다.
+[Open the demo](http://127.0.0.1:8080/?event=demo-2). The demo script sets capacity to **2 users**, so you can see the queue with just three tabs. The server's default capacity is 1,000 users. If port 8080 is already in use, stop the existing server or run `HTTP_ADDR=127.0.0.1:8081 ./scripts/demo.sh`.
 
-1. 화면의 **대기실 입장하기**를 누릅니다.
-2. **새 사용자 탭**으로 2개를 더 열고 입장합니다. 세 번째 사용자는 기다립니다.
-3. 첫 번째 탭에서 **예약하기** 또는 **나가기**를 누르면 다음 사용자가 입장합니다.
-4. **heartbeat 중단**을 체크하거나 탭을 닫으면 마지막 heartbeat로부터 30초 뒤 자리가 반환됩니다. 워커·화면 갱신 때문에 화면 반영에는 수초가 추가될 수 있습니다.
-5. 새로고침해도 같은 사용자·순번이 유지됩니다. 브라우저의 **탭 복제**는 sessionStorage가 복제될 수 있어 같은 사용자 테스트에 쓸 수 있습니다. 확실히 새 사용자를 만들려면 화면의 **새 사용자 탭**을 사용하세요.
-6. **SSE 모드**로 전환해 서버 스트림 방식도 확인할 수 있습니다.
+1. Click **Join Waiting Room** on the screen.
+2. Open two more tabs using **New User Tab** and join. The third user waits.
+3. Click **Reserve** or **Leave** in the first tab to admit the next user.
+4. Check **Stop Heartbeat** or close the tab, and the slot is released 30 seconds after the last heartbeat. Worker execution and screen refreshes may add a few seconds before the change appears on screen.
+5. Refreshing preserves the same user and queue position. The browser's **Duplicate Tab** feature may copy sessionStorage, so it can be used to test the same user. To reliably create a new user, use **New User Tab** on the screen.
+6. Switch to **SSE Mode** to try server streaming as well.
 
-`demo.sh`는 로컬 Redis 16380 포트와 `.tools/demo-redis`를 사용합니다. 종료 시 자신이 시작한 Redis만 종료하고 데이터는 보존합니다. 데모 HMAC 키도 `.tools/demo-secret`에 보존합니다.
+`demo.sh` uses local Redis on port 16380 and `.tools/demo-redis`. On exit, it stops only the Redis instance it started and preserves the data. The demo HMAC key is also preserved in `.tools/demo-secret`.
 
-### 다른 컴퓨터: Docker Compose
+### On Another Computer: Docker Compose
 
-Docker Compose가 설치되어 있어야 합니다.
+Docker Compose must be installed.
 
 ```sh
 cp .env.example .env
-# 출력한 값을 .env의 TOKEN_SECRET= 뒤에 붙여넣으세요.
+# Paste the generated value after TOKEN_SECRET= in .env.
 openssl rand -hex 32
 docker compose up --build
 ```
 
-[기본 화면](http://127.0.0.1:8080/?event=demo)을 엽니다. 탭 테스트를 위해 `.env`에서 `ACTIVE_LIMIT=2`로 바꾸려면 **첫 실행 전에** 설정하세요. 이미 등록된 공연의 정원 설정을 변경하면 안전을 위해 `CONFIG_MISMATCH`로 시작이 거부됩니다. 새 테스트에는 `EVENT_IDS=demo-small`처럼 새 공연 ID를 사용합니다.
+Open the [default screen](http://127.0.0.1:8080/?event=demo). To change `.env` to `ACTIVE_LIMIT=2` for tab testing, set it **before the first run**. If you change the capacity configuration for an event that is already registered, startup is rejected with `CONFIG_MISMATCH` as a safety measure. Use a new event ID for a new test, such as `EVENT_IDS=demo-small`.
 
-Compose Redis는 AOF 데이터를 볼륨에 보존합니다. `docker compose down`은 볼륨을 삭제하지 않습니다. 이 컴퓨터에는 Docker가 없어 Compose 빌드는 실행하지 않았으며, 실제 검증은 네이티브 Go/Redis로 진행했습니다.
+Compose Redis preserves AOF data in a volume. `docker compose down` does not delete the volume. Docker was unavailable on this computer, so the Compose build was not run; actual validation used native Go/Redis.
 
-### Go / Redis 직접 실행
+### Run Go / Redis Directly
 
-Go 1.26 이상, Redis 7 이상이 필요합니다. 검증 버전은 Go 1.27.2, Redis 7.2.7입니다.
+Requires Go 1.26 or later and Redis 7 or later. The validated versions were Go 1.27.2 and Redis 7.2.7.
 
 ```sh
 redis-server --bind 127.0.0.1 --port 16379 --appendonly yes --maxmemory-policy noeviction
-# 다른 터미널
+# In another terminal
 export TOKEN_SECRET="$(openssl rand -hex 32)"
 export REDIS_URL=redis://127.0.0.1:16379/0
 go run ./cmd/server
 ```
 
-여러 서버는 같은 Redis, `TOKEN_SECRET`, 공연 설정을 사용하고 `HTTP_ADDR`만 다르게 설정합니다. 영속 환경에서는 비밀 키를 재시작마다 새로 만들지 말고 안전하게 보관하세요.
+Multiple servers must use the same Redis instance, `TOKEN_SECRET`, and event configuration, with only `HTTP_ADDR` set differently. In a persistent environment, store the secret securely instead of generating a new one on every restart.
 
-## 구조
+## Architecture
 
 ```mermaid
 flowchart LR
-  B[브라우저: 탭별 데모 세션] -->|join / status 2초 폴링 또는 SSE| API[Go HTTP 서버 1..N]
-  B -->|heartbeat 10초마다| API
-  B -->|reserve + 서명된 입장 토큰| API
-  API -->|HMAC 사용자·공연·입장 세대 검증| L[Redis Lua 원자적 처리]
-  W[각 서버의 1초 ticker 워커] --> L
-  L --> Q[waiting ZSET: 진입 시각 + 시퀀스]
-  L --> A[active ZSET: 마지막 heartbeat]
-  L --> S[started ZSET: 최초 입장 시각]
-  L --> R[예약 HASH + 잔여 티켓]
-  L --> M[정원 peak / FIFO 위반 / 대기 시간]
+  B[Browser: per-tab demo session] -->|join / status polling every 2s or SSE| API[Go HTTP servers 1..N]
+  B -->|heartbeat every 10s| API
+  B -->|reserve + signed admission token| API
+  API -->|HMAC validation of user, event, and admission generation| L[Atomic Redis Lua processing]
+  W[1s ticker worker on each server] --> L
+  L --> Q[waiting ZSET: join time + sequence]
+  L --> A[active ZSET: last heartbeat]
+  L --> S[started ZSET: initial admission time]
+  L --> R[Reservation HASH + remaining tickets]
+  L --> M[Peak occupancy / FIFO violations / wait time]
 ```
 
-### 왜 Sorted Set인가?
+### Why Sorted Sets?
 
-- `waiting`의 member는 사용자 ID 하나입니다. `ZRANK`로 현재 순번을 얻고, `ZRANGE`로 선두부터 가져옵니다. 기존 사용자는 재진입 시 score를 수정하지 않습니다.
-- score는 Redis 시각의 밀리초 × 1,000과 `INCR(sequence)` 중 큰 값입니다. 같은 밀리초에 수천 명이 도착하거나 시계가 뒤로 움직여도 증가합니다. 큰 epoch 값에 소수를 더하는 방식의 정밀도 손실을 피합니다. IEEE-754 정수 정밀도 범위 내 값을 사용하며 JSON에서는 ticket을 문자열로 전달합니다.
-- `active`의 score는 마지막 heartbeat 시각입니다. `ZRANGEBYSCORE`로 만료 후보를 효율적으로 찾습니다.
-- `started`를 따로 둬서 heartbeat로 최초 입장 시각을 덮어쓰지 않습니다. 계속 heartbeat를 보내도 10분 체류 제한을 우회할 수 없습니다.
+- Each member of `waiting` is a single user ID. `ZRANK` provides the current queue position, and `ZRANGE` retrieves users from the front. An existing user's score is not changed when they rejoin.
+- The score is the greater of Redis time in milliseconds × 1,000 and `INCR(sequence)`. It increases even when thousands of users arrive in the same millisecond or the clock moves backward. This avoids the precision loss caused by adding fractions to large epoch values. Values stay within the IEEE-754 integer precision range, and ticket is passed as a string in JSON.
+- The score in `active` is the last heartbeat time. `ZRANGEBYSCORE` efficiently finds expiration candidates.
+- `started` is kept separately so that heartbeats do not overwrite the initial admission time. Sending heartbeats continuously cannot bypass the 10-minute stay limit.
 
-여기서 선착순은 **Redis가 join을 직렬 처리한 순서**입니다. 인터넷상의 클릭 시각이나 Go 고루틴 시작 순서를 보장한다는 뜻이 아닙니다. [Redis Sorted Set 문서](https://redis.io/docs/latest/develop/data-types/sorted-sets/)
+Here, first-come, first-served means **the order in which Redis serializes join operations**. It does not guarantee the order of clicks over the internet or the order in which Go goroutines start. [Redis Sorted Set documentation](https://redis.io/docs/latest/develop/data-types/sorted-sets/)
 
-### 왜 Lua인가?
+### Why Lua?
 
-애플리케이션에서 `ZCARD → 빈자리 계산 → ZREM → ZADD`를 각각 호출하면 여러 서버가 같은 빈자리를 보고 동시에 입장시킬 수 있습니다. 이 구현에서는 **만료 처리 → 빈자리 계산 → 대기열 선두 제거 → 입장자 추가 → 지표 기록**을 한 Lua 실행으로 처리합니다.
+If the application calls `ZCARD → calculate available slots → ZREM → ZADD` separately, multiple servers may see the same available slot and admit users simultaneously. This implementation performs **expiration processing → available-slot calculation → removal from the front of the queue → addition of admitted users → metrics recording** in a single Lua execution.
 
-정원이 C, 실행 직전 입장자가 A명이면 `min(C-A, 대기자 수, 1000)`명만 추가합니다. 동일 Redis primary에서 모든 입장 변경이 이 스크립트를 통과하므로 정원을 넘지 않습니다. 신규 join은 자리가 비어 있어도 먼저 줄에 서며, 입장은 워커만 담당합니다. 따라서 기존 대기자를 추월할 수 없습니다.
+If capacity is C and there are A admitted users immediately before execution, only `min(C-A, number of waiting users, 1000)` users are added. All admission changes on the same Redis primary pass through this script, so capacity is never exceeded. New joins enter the queue first even when slots are available; only workers handle admission. This prevents them from overtaking existing waiting users.
 
-워커를 여러 대에서 실행해도 분산 락이나 리더 선출이 필요하지 않습니다. 공연별 설정도 Redis에 기록해 서로 다른 정원으로 실행한 서버를 차단합니다. 스크립트 하나당 입장·만료 처리를 각각 최대 1,000명 단위로 제한해 Redis 장기 점유를 줄였습니다. [Redis Lua 원자성 문서](https://redis.io/docs/latest/develop/programmability/eval-intro/)
+Running workers on multiple servers requires neither a distributed lock nor leader election. Per-event configuration is also recorded in Redis to block servers running with different capacities. Each script execution limits admission and expiration processing to batches of at most 1,000 users each, reducing long periods of Redis monopolization. [Redis Lua atomicity documentation](https://redis.io/docs/latest/develop/programmability/eval-intro/)
 
-키는 `vwr:{event-id}:waiting`처럼 같은 hash tag를 씁니다. 하나의 공연에 필요한 키가 같은 슬롯에 위치하도록 설계했지만, 현재 연결 코드는 단일 Redis 클라이언트이며 Cluster 배포 검증은 하지 않았습니다.
+Keys use the same hash tag, as in `vwr:{event-id}:waiting`. The design places all keys required for an event in the same slot, but the current connection code uses a single Redis client, and Redis Cluster deployment has not been validated.
 
-### 퇴장과 예약
+### Leaving and Reservations
 
-- **명시적 퇴장**: leave로 active·started·generation 또는 waiting 항목을 제거합니다. 예약 성공도 같은 Lua 안에서 자리를 반환합니다.
-- **암묵적 퇴장**: `last_heartbeat <= now-30s` 또는 `admitted_at <= now-10m`이면 만료됩니다. 빈자리는 다음 워커 tick에 채워집니다.
-- **경계 경쟁**: heartbeat, status, reserve도 유효 기간을 검사합니다. 워커가 늦더라도 만료된 토큰으로 구매하거나 늦은 heartbeat로 부활할 수 없습니다.
-- **서명 토큰**: HMAC-SHA256 + 버전 + 목적 구분. 사용자, 공연, 입장 세대, 만료 시각을 포함합니다. 세션 토큰은 입장 토큰으로 사용할 수 없습니다.
-- **현재 입장 확인**: reserve는 서명 확인 후 Redis에서 현재 active와 generation을 다시 확인합니다. 퇴장·재입장 후 이전 토큰은 거부합니다.
-- **중복 예약 방지**: 재고 차감과 사용자별 예약 저장도 Lua 한 번으로 실행합니다. 같은 입장 세대의 재요청은 같은 예약 번호를 반환하고 재고를 다시 차감하지 않습니다. 응답 유실 시 status로도 예약 번호를 복구할 수 있습니다.
-- **장애 시**: Redis 오류에는 HTTP 503을 반환하며 입장이나 예약을 허용하지 않습니다.
+- **Explicit departure**: leave removes the user's active, started, and generation entries, or their waiting entry. A successful reservation also releases the slot within the same Lua execution.
+- **Implicit departure**: users expire when `last_heartbeat <= now-30s` or `admitted_at <= now-10m`. Available slots are filled on the next worker tick.
+- **Races at expiration boundaries**: heartbeat, status, and reserve also check validity periods. Even if a worker is delayed, an expired token cannot be used to purchase, and a late heartbeat cannot revive an expired admission.
+- **Signed tokens**: HMAC-SHA256 + version + purpose separation. Tokens include the user, event, admission generation, and expiration time. A session token cannot be used as an admission token.
+- **Current admission verification**: after verifying the signature, reserve checks the current active entry and generation again in Redis. An old token is rejected after the user leaves and reenters.
+- **Duplicate reservation prevention**: inventory deduction and per-user reservation storage also run in a single Lua execution. Repeated requests for the same admission generation return the same reservation ID without deducting inventory again. If a response is lost, status can also recover the reservation ID.
+- **On failure**: Redis errors return HTTP 503, and admission and reservations are denied.
 
-실제 운영은 검증된 로그인 사용자의 ID를 사용해야 합니다. 현재 `/session`은 탭 테스트용 무작위 사용자 세션을 발급합니다. 한 세션의 중복 줄서기는 막지만, 익명 사용자가 여러 세션을 발급받는 봇 방어는 구현하지 않았습니다.
+Production use must rely on IDs from authenticated users. The current `/session` issues random user sessions for tab testing. It prevents one session from joining the queue multiple times, but bot protection against anonymous users obtaining multiple sessions is not implemented.
 
-### 순번·예상 시간·SSE
+### Queue Position, Estimated Wait Time, and SSE
 
-`position`은 현재 대기열의 1부터 시작하는 순번, `ahead = position-1`입니다. 입장 시에는 둘 다 0입니다. `ticket`은 최초 진입 순서를 나타내는 변하지 않는 내부 순서 값입니다.
+`position` is the user's current one-based queue position, and `ahead = position-1`. Both are 0 once admitted. `ticket` is an immutable internal ordering value representing the original join order.
 
-예상 시간은 `(position × 관측된 평균 체류 시간) / ACTIVE_LIMIT`입니다. 퇴장 표본이 없으면 `null`/“계산 중”을 표시합니다. 진행률은 처음 표시한 순번 대비 감소량이며 완료 시각 보장이 아닙니다.
+Estimated wait time is `(position × observed average stay duration) / ACTIVE_LIMIT`. If there are no departure samples, the screen shows `null`/“Calculating.” Progress reflects the decrease relative to the first displayed queue position; it does not guarantee a completion time.
 
-기본은 2초 HTTP 폴링입니다. `?event=demo&transport=sse`에서는 Authorization 헤더를 지원하는 `fetch` 스트림으로 SSE를 사용합니다. 단절되면 폴링으로 전환합니다. SSE 연결은 heartbeat를 대신하지 않습니다. 현재 SSE도 서버에서 Redis를 2초마다 조회하므로 Redis 조회량 감소를 주장하지 않습니다. 향후 워커의 변경 알림 + Pub/Sub + 재접속 시 상태 재조회로 개선할 수 있습니다.
+The default is HTTP polling every 2 seconds. With `?event=demo&transport=sse`, SSE uses a `fetch` stream that supports the Authorization header. If the connection drops, it falls back to polling. An SSE connection does not replace heartbeats. The current SSE implementation also queries Redis every 2 seconds on the server, so no reduction in Redis query volume is claimed. A future improvement could combine worker change notifications + Pub/Sub + a fresh state query on reconnection.
 
-대기 중 탭을 닫은 사람은 순번을 유지하다가, 자신의 입장 차례에 heartbeat가 없으면 30초 뒤 퇴장합니다. 대기자 자체를 heartbeat로 삭제하지 않는 것은 새로고침·재접속 순번 보존을 위한 선택이며, 긴 대기열에서 유령 대기자를 즉시 제거하는 별도 정책은 없습니다.
+Users who close their tabs while waiting retain their queue positions. When their turn for admission arrives, they are removed 30 seconds later if no heartbeat is received. Choosing not to remove waiting users based on heartbeats preserves queue positions across refreshes and reconnections; there is no separate policy for immediately removing ghost users from long queues.
 
 ## API
 
-먼저 `POST /session`으로 `{user_id, session_token}`을 받고 이후 요청에 `Authorization: Bearer <session_token>`을 보냅니다. 요청 body는 필요하지 않습니다.
+First, call `POST /session` to obtain `{user_id, session_token}`, then send `Authorization: Bearer <session_token>` with subsequent requests. No request body is required.
 
-| 메서드 | 경로 | 결과 |
+| Method | Path | Result |
 |---|---|---|
-| POST | `/session` | 24시간 데모 세션 발급 |
-| POST | `/events/{id}/queue` | 중복 없는 join, position/status |
-| GET | `/events/{id}/queue/status` | 순번, ahead, 예상 시간, 입장 토큰 |
-| GET | `/events/{id}/queue/stream` | `event: status` SSE, 2초마다 현재 상태 |
-| POST | `/events/{id}/queue/heartbeat` | 입장 lease 갱신, 현재 상태 반환 |
-| POST | `/events/{id}/queue/leave` | 멱등 퇴장, HTTP 204 |
-| POST | `/events/{id}/reserve` | `X-Admission-Token` 필수, 예약 번호 |
-| GET | `/healthz` | Redis 접근 상태 |
+| POST | `/session` | Issue a 24-hour demo session |
+| POST | `/events/{id}/queue` | Join without duplicates, position/status |
+| GET | `/events/{id}/queue/status` | Queue position, ahead, estimated wait time, admission token |
+| GET | `/events/{id}/queue/stream` | `event: status` SSE, current state every 2 seconds |
+| POST | `/events/{id}/queue/heartbeat` | Renew admission lease and return current state |
+| POST | `/events/{id}/queue/leave` | Idempotent departure, HTTP 204 |
+| POST | `/events/{id}/reserve` | Requires `X-Admission-Token`, returns reservation ID |
+| GET | `/healthz` | Redis connectivity status |
 
-대기 응답 예시:
+Example waiting response:
 
 ```json
 {"status":"waiting","position":1234,"ahead":1233,"estimated_wait_seconds":148,"ticket":"1791760000000001"}
 ```
 
-입장 응답에는 `status: "admitted"`, `position: 0`, `token`, `expires_at`(Unix ms)이 포함됩니다. 그 밖에 `absent`, `expired`, `completed` 상태가 있습니다. `completed`에는 `reservation_id`가 포함됩니다.
+An admission response includes `status: "admitted"`, `position: 0`, `token`, and `expires_at` (Unix ms). Other states are `absent`, `expired`, and `completed`. `completed` includes `reservation_id`.
 
-오류: 인증 없음/만료 401, 토큰 없음/변조/입장 만료 403, 없는 공연 404, 매진/이미 예약 409, Redis 장애/설정 충돌 503. 세션과 입장 토큰을 URL에 넣거나 로그에 기록하지 마세요.
+Errors: missing/expired authentication 401, missing/tampered token or expired admission 403, unknown event 404, sold out/already reserved 409, Redis failure/configuration mismatch 503. Do not put session or admission tokens in URLs or record them in logs.
 
 ```sh
-# HTTP 예시: SESSION에는 /session 응답의 session_token을 넣습니다.
+# HTTP example: set SESSION to session_token from the /session response.
 curl -X POST http://127.0.0.1:8080/session
 curl -X POST -H "Authorization: Bearer $SESSION" http://127.0.0.1:8080/events/demo/queue
 curl -H "Authorization: Bearer $SESSION" http://127.0.0.1:8080/events/demo/queue/status
 curl -X POST -H "Authorization: Bearer $SESSION" -H "X-Admission-Token: $ADMISSION" http://127.0.0.1:8080/events/demo/reserve
 ```
 
-## 설정
+## Configuration
 
-| 환경 변수 | 기본값 | 의미 |
+| Environment Variable | Default | Description |
 |---|---|---|
-| `ACTIVE_LIMIT` | `1000` | 공연별 정원, 1~100000 |
-| `HEARTBEAT_TIMEOUT` | `30s` | 마지막 heartbeat 만료 간격 |
-| `MAX_STAY` | `10m` | 최초 입장부터 최대 체류 시간 |
-| `WORKER_INTERVAL` | `1s` | 각 서버의 입장/정리 주기 |
-| `TOKEN_SECRET` | 없음, 필수 | 32바이트 이상 HMAC 키, 모든 서버 동일 |
-| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis 주소, 인증/TLS URL 지원 |
-| `HTTP_ADDR` | `127.0.0.1:8080` | HTTP 바인딩 |
-| `EVENT_IDS` | `demo` | 허용된 공연 ID, 쉼표 구분 |
-| `EVENT_TICKETS` | `10000` | 공연 최초 등록 시 티켓 수, 재시작 시 재설정하지 않음 |
+| `ACTIVE_LIMIT` | `1000` | Per-event capacity, 1–100000 |
+| `HEARTBEAT_TIMEOUT` | `30s` | Expiration interval since the last heartbeat |
+| `MAX_STAY` | `10m` | Maximum stay duration from initial admission |
+| `WORKER_INTERVAL` | `1s` | Admission/cleanup interval on each server |
+| `TOKEN_SECRET` | None, required | HMAC key of at least 32 bytes, identical on all servers |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis address, supports authentication/TLS URLs |
+| `HTTP_ADDR` | `127.0.0.1:8080` | HTTP bind address |
+| `EVENT_IDS` | `demo` | Allowed event IDs, comma-separated |
+| `EVENT_TICKETS` | `10000` | Ticket count when an event is first registered; not reset on restart |
 
-브라우저 heartbeat 간격은 10초입니다. 타임아웃을 이보다 짧게 설정하려면 프론트엔드 간격도 함께 조정해야 합니다.
+The browser heartbeat interval is 10 seconds. To set a timeout shorter than this, you must also adjust the frontend interval.
 
-## 테스트
+## Tests
 
-Mock Redis가 아닌 **실제 Redis**를 사용합니다. Redis가 없으면 테스트를 건너뛰지 않고 실패합니다. 테스트는 고유한 `test-*`/`http-*`/`stream-*` 공연만 정리하며 `FLUSHDB`는 사용하지 않습니다.
+Tests use **real Redis**, not a mock. They fail rather than skip if Redis is unavailable. Tests clean up only their unique `test-*`/`http-*`/`stream-*` events and do not use `FLUSHDB`.
 
 ```sh
-# Redis가 16379에 실행 중인 상태에서
+# With Redis running on port 16379
 go test -race -count=1 ./...
 go vet ./...
-# 시스템 Go 대신 현재 작업 폴더의 Go를 사용할 때
+# To use Go from the current working directory instead of the system Go
 ./scripts/go-local.sh test -race -count=1 ./...
-# 다른 Redis 주소
+# A different Redis address
 REDIS_ADDR=127.0.0.1:6379 go test -race ./...
 ```
 
-검증 항목:
+Validation coverage:
 
-- 10,000개 동시 join + 독립 Redis 연결을 사용하는 워커 4개: active 1000, waiting 9000, peak ≤1000, FIFO 위반 0.
-- 입장자 100명 퇴장: 1001~1100번 정확히 입장.
-- 주입 가능한 시계: 29초 유지, 30초 만료 및 자리 승계, 최대 체류 시간 만료, 늦은 heartbeat 부활 금지.
-- 같은 사용자의 100개 동시 join과 입장 후 join: 중복 없음.
-- 빈자리 발생 후 신규 사용자 끼어들기 차단, Redis 시계 역행 시 FIFO 유지.
-- 토큰 위조, 목적 혼동, 다른 사용자/공연, 퇴장 및 재입장 후 이전 토큰 차단.
-- 20개 동시 예약 요청과 재시도: 재고 1장, 예약 1개.
-- SSE 인증된 입장 상태/토큰 전송과 연결 종료, 정적 파일 제공.
+- 10,000 concurrent joins + four workers using independent Redis connections: active 1000, waiting 9000, peak ≤1000, zero FIFO violations.
+- Departure of 100 admitted users: users 1001–1100 are admitted exactly in order.
+- Injectable clock: admission remains valid at 29 seconds, expires at 30 seconds with the slot passed to the next user, expires at the maximum stay duration, and cannot be revived by a late heartbeat.
+- 100 concurrent joins by the same user and joins after admission: no duplicates.
+- New users cannot cut in when a slot becomes available; FIFO is preserved when the Redis clock moves backward.
+- Rejection of forged tokens, token-purpose confusion, tokens for another user/event, and old tokens after departure and reentry.
+- 20 concurrent reservation requests and retries: one ticket deducted, one reservation created.
+- SSE delivery of authenticated admission state/tokens and connection closure; static file serving.
 
-GitHub Actions에서도 `go vet`, `go test -race -count=1 ./...`, 10,000명 부하 테스트가 모두 통과했습니다. [검증 실행 결과](https://github.com/jsim84747/ticketing-system/actions/runs/38186910621) · 검증한 코드 커밋: `545e0a5`.
+`go vet`, `go test -race -count=1 ./...`, and the 10,000-user load test all passed in GitHub Actions as well. [Validation run results](https://github.com/jsim84747/ticketing-system/actions/runs/38186910621) · Validated code commit: `545e0a5`.
 
-## 부하 테스트와 결과
+## Load Test and Results
 
 ```sh
-# 필요 시 macOS의 파일 디스크립터 한도를 현재 셸에만 조정
+# If needed, adjust the macOS file descriptor limit for the current shell only
 ulimit -n 8192
 ./scripts/loadtest.sh -users 10000 -limit 1000 -instances 4 -seed 42 > benchmarks/my-run.json
 ```
 
-서로 독립된 HTTP 서버·Redis 클라이언트·워커 4개를 한 Go 프로세스 안에 띄웁니다. 10,000개 join 고루틴을 동시에 시작하고 실제 HTTP 요청으로 인증과 join을 거칩니다. HTTP 연결은 서버당 64개로 제한하고 나머지 요청은 클라이언트에서 대기합니다. **10,000개 TCP 연결을 동시에 유지하는 테스트는 아닙니다.** 첫 시도는 macOS accept backlog 한도에서 연결 reset이 발생해 연결 수를 제한했고, 실패한 시도는 성공 수치에 섞지 않았습니다.
+Four independent HTTP servers, Redis clients, and workers run inside one Go process. The test starts 10,000 join goroutines simultaneously and performs authentication and joins through actual HTTP requests. HTTP connections are limited to 64 per server, and the remaining requests wait on the client side. **This is not a test that maintains 10,000 simultaneous TCP connections.** The first attempt encountered connection resets due to the macOS accept backlog limit, so the connection count was capped; failed attempts were not included in the successful results.
 
-진입 후 200ms마다 현재 입장자 중 무작위 1~500명을 HTTP leave로 퇴장시키며, 10초마다 생존 입장자에게 heartbeat를 보냅니다. 정원 또는 FIFO 위반, 요청 오류, 총 입장 인원 불일치가 있으면 종료 코드 1로 실패합니다. 전용 `load-<random-id>` 공연만 만들고 종료 시 그 키만 정리합니다.
+After users join, the test randomly selects 1–500 currently admitted users every 200 ms and makes them leave via HTTP leave. It sends heartbeats to the remaining admitted users every 10 seconds. Capacity or FIFO violations, request errors, or a mismatch in the total number admitted cause the test to fail with exit code 1. It creates only a dedicated `load-<random-id>` event and cleans up only that event's keys on exit.
 
-**2026-10-11 로컬 측정** — macOS arm64, Go 1.27.2, Redis 7.2.7, GOMAXPROCS 10, 서버 4개, 각 워커 1초, seed 42. [원본 JSON](benchmarks/local-10000.json)
+**Local measurement on 2026-10-11** — macOS arm64, Go 1.27.2, Redis 7.2.7, GOMAXPROCS 10, four servers, each worker ticking every second, seed 42. [Original JSON](benchmarks/local-10000.json)
 
-| 지표 | 결과 |
+| Metric | Result |
 |---|---:|
-| 전체 입장 처리 | 10,000명 |
-| 최대 동시 입장자 | **1,000명** |
-| FIFO 순서 위반 | **0건** |
-| HTTP / 워커 오류 | **0건** |
-| 평균 대기 시간 | 5,576.21 ms |
-| 최대 대기 시간 | 10,787 ms |
-| 전체 시나리오 처리량 | 805.66명/초 |
-| 10,000개 join 응답 완료 | 0.209초 |
-| 진입부터 전원 퇴장까지 | 12.412초 |
-| 종료 시 active / waiting | 0 / 0 |
+| Total users admitted | 10,000 |
+| Maximum concurrent admitted users | **1,000** |
+| FIFO ordering violations | **0** |
+| HTTP / worker errors | **0** |
+| Average wait time | 5,576.21 ms |
+| Maximum wait time | 10,787 ms |
+| Overall scenario throughput | 805.66 users/sec |
+| Completion of 10,000 join responses | 0.209 seconds |
+| From joining until all users have left | 12.412 seconds |
+| Active / waiting at completion | 0 / 0 |
 
-대기 시간은 Redis가 join을 확정한 시각부터 입장까지이며 클라이언트의 연결 대기 시간은 제외합니다. 처리량은 총 입장자 수 ÷ 시나리오 전체 소요 시간입니다. 무작위 퇴장 패턴과 1초 tick에 영향을 받는 **시나리오 수치**이며 Redis/HTTP의 포화 처리량이 아닙니다. 세션 발급 준비도 측정 구간에서 제외했습니다. 멀티 호스트 네트워크, 장시간 부하, 장애 복구 벤치마크는 수행하지 않았습니다.
+Wait time is measured from when Redis confirms the join until admission; it excludes the client's connection wait time. Throughput is the total number of admitted users ÷ the total scenario duration. These are **scenario-specific figures** affected by the random departure pattern and 1-second ticks, not the saturation throughput of Redis/HTTP. Session issuance setup was also excluded from the measurement window. Multi-host networking, sustained load, and failure recovery benchmarks were not performed.
 
-### GitHub Actions 교차 검증
+### Cross-Validation with GitHub Actions
 
-2026-10-11 (미국 동부 시간) GitHub Linux amd64 러너에서도 동일한 시나리오를 실행했습니다. Go 1.27.2, Redis 7.2.7, GOMAXPROCS 2, HTTP 서버 4개입니다. [CI 원본 JSON](benchmarks/github-ci-10000.json)
+The same scenario was also run on a GitHub Linux amd64 runner on 2026-10-11 (U.S. Eastern Time), using Go 1.27.2, Redis 7.2.7, GOMAXPROCS 2, and four HTTP servers. [Original CI JSON](benchmarks/github-ci-10000.json)
 
-| 지표 | 결과 |
+| Metric | Result |
 |---|---:|
-| 전체 입장 처리 | 10,000명 |
-| 최대 동시 입장자 | **1,000명** |
-| FIFO 순서 위반 / HTTP·워커 오류 | **0 / 0건** |
-| 평균 / 최대 대기 시간 | 5,176.66 / 10,109 ms |
-| 전체 시나리오 처리량 | 799.42명/초 |
-| 전체 소요 시간 | 12.509초 |
+| Total users admitted | 10,000 |
+| Maximum concurrent admitted users | **1,000** |
+| FIFO ordering violations / HTTP and worker errors | **0 / 0** |
+| Average / maximum wait time | 5,176.66 / 10,109 ms |
+| Overall scenario throughput | 799.42 users/sec |
+| Total duration | 12.509 seconds |
 
-로컬과 CI의 CPU·OS가 달라 수치는 다르지만 정원과 FIFO 조건은 모두 통과했습니다. 두 실행 모두 앞서 설명한 동일한 부하 모델의 측정 한계가 적용됩니다.
+The figures differ because the local and CI environments have different CPUs and operating systems, but both passed the capacity and FIFO checks. Both runs are subject to the measurement limitations of the same load model described above.
 
-## 면접에서 설명하기
+## Explaining the Design in an Interview
 
-> “입장 정원은 분산 서버의 로컬 카운터로 관리하지 않고 Redis를 유일한 기준으로 사용했습니다. 대기 순서와 중복 확인에는 Sorted Set을 사용하고, 만료 제거부터 빈자리 계산과 입장까지 Lua 한 번으로 처리해 여러 워커가 같은 자리를 중복 배정하지 못하게 했습니다. 토큰은 입장 사실을 증명하지만 퇴장 후에도 남을 수 있어서, 실제 예약 시 현재 lease와 입장 세대를 Redis에서 함께 확인합니다.”
+> “I used Redis as the single source of truth for admission capacity instead of managing it with local counters on distributed servers. I used Sorted Sets for queue ordering and duplicate detection, and handled expiration removal, available-slot calculation, and admission in one Lua execution so that multiple workers could not allocate the same slot twice. Tokens prove admission but can remain after a user leaves, so an actual reservation checks both the current lease and admission generation in Redis.”
 
-예상 시간은 추정임을 명시하고, race detector 통과와 분산 정원 보장은 다른 검증이라고 설명하세요. 전자는 Go 메모리 경쟁 검사이며, 후자는 Lua 원자성과 실 Redis 동시성 테스트로 확인합니다.
+Make it clear that wait times are estimates, and explain that passing the race detector and guaranteeing capacity across distributed servers are different forms of validation. The former checks for Go memory races; the latter is verified through Lua atomicity and concurrency tests against real Redis.
 
-## 운영 범위와 한계
+## Operational Scope and Limitations
 
-- 단일 Redis primary가 일관된 상태를 유지하고 모든 입장이 이 경로를 통과하는 조건에서 정원을 보장합니다. Redis failover로 미복제 데이터가 유실되는 상황까지 절대 보장을 주장하지 않습니다. AOF everysec는 장애 시 최근 쓰기가 유실될 수 있습니다.
-- Redis eviction은 대기·입장 상태를 깨뜨릴 수 있어 `noeviction`을 사용합니다. 용량·지연 모니터링, 백업, 접근 제어와 TLS를 운영 환경에서 구성해야 합니다. Lua는 다른 요청과의 원자성을 제공하지만 실행 중 오류에 대한 트랜잭션 rollback은 제공하지 않습니다.
-- 이 프로젝트의 예약/재고는 Redis 기반 데모입니다. 실제 결제에는 영속 DB, 결제 멱등성, 예약 유효 기간, 취소·보상 절차가 추가로 필요합니다.
-- 실사용 배포 전 인증 시스템과 rate limit/봇 방어를 추가하세요. HTTP 서버는 기본 localhost에만 바인딩합니다.
-- 공연 키는 순서·설정·예약 보존을 위해 자동 만료시키지 않습니다. 공연 종료 시 업무 보존 정책에 따라 정리하는 운영 절차가 필요합니다.
-- 브라우저의 백그라운드 탭 타이머 절전으로 heartbeat가 지연될 수 있습니다. 현재 정책은 마지막 수신 시각 기준 30초를 엄격히 적용합니다.
+- Capacity is guaranteed under the conditions that a single Redis primary maintains consistent state and all admissions pass through this path. No absolute guarantee is claimed for situations where Redis failover loses unreplicated data. AOF everysec can lose recent writes during a failure.
+- Redis eviction can disrupt waiting and admission state, so `noeviction` is used. Capacity and latency monitoring, backups, access control, and TLS must be configured for production. Lua provides atomicity relative to other requests, but does not provide transactional rollback for errors during execution.
+- This project's reservations/inventory are a Redis-based demo. Real payment processing also requires a persistent database, payment idempotency, reservation validity periods, and cancellation/compensation procedures.
+- Add an authentication system and rate limiting/bot protection before deploying for real users. The HTTP server binds only to localhost by default.
+- Event keys do not expire automatically, to preserve ordering, configuration, and reservations. An operational procedure is needed to clean them up after an event ends according to the business's retention policy.
+- Browser power-saving behavior for background-tab timers may delay heartbeats. The current policy strictly applies 30 seconds from the last received heartbeat.
 
-## 파일과 개발 흐름
+## Files and Development Workflow
 
-- `internal/queue/queue.lua`: FIFO, 정원, lease, 원자적 예약
-- `internal/queue/store.go`: Redis 호출, 주입 가능한 clock, ticker 워커
-- `internal/auth/`: HMAC 서명과 검증
-- `internal/httpapi/`: API, SSE, 정적 웹 화면
-- `cmd/server/`: 설정, 실행, 정상 종료
-- `cmd/loadtest/`: HTTP 부하 테스트 및 불변 조건 검사
-- `benchmarks/`: 실제 측정 결과
-
-작업은 요청한 6단계로 나눠 테스트 후 커밋했습니다: 진입/조회 → 워커/정원 → heartbeat/만료 → 토큰/예약 → 웹/SSE → 부하 테스트/문서. 변경할 때는 해당 통합 테스트와 `go test -race ./...`를 통과시킨 뒤 커밋하세요.
+- `internal/queue/queue.lua`: FIFO, capacity, leases, atomic reservations
+- `internal/queue/store.go`: Redis calls, injectable clock, ticker workers
+- `internal/auth/`: HMAC signing and verification
+- `internal/httpapi/`: API, SSE, static web screen
+- `cmd/server/`: configuration, startup, graceful shutdown
