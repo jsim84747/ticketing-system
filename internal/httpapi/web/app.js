@@ -7,7 +7,6 @@ $('testing').hidden = new URLSearchParams(location.search).get('debug') !== '1';
 $('mode').href = `/?event=${encodeURIComponent(eventID)}${useSSE ? '' : '&transport=sse'}${location.search.includes('debug=1') ? '&debug=1' : ''}`;
 $('mode').textContent = useSSE ? 'Polling mode' : 'SSE mode';
 const base = `/events/${encodeURIComponent(eventID)}`;
-$('event-id').textContent = eventID;
 $('new-tab').href = `/?event=${encodeURIComponent(eventID)}&debug=1`;
 let session = sessionStorage.getItem('session'), state = 'absent', admission = '', busy = false;
 let initial = Number(sessionStorage.getItem(`initial:${eventID}`)) || 0;
