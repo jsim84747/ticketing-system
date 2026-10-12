@@ -270,6 +270,37 @@ func TestScheduledOpening(t *testing.T) {
 	}
 }
 
+func TestSchedulingSendsAdmittedUsersBackInOrder(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	if ids, _ := s.Tick(ctx, e); len(ids) != 2 {
+		t.Fatalf("auto admitted %v", ids)
+	}
+	manual := "manual"
+	openAt := clock.Now().Add(time.Hour).UnixMilli()
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &openAt}); err != nil {
+		t.Fatal(err)
+	}
+	// Nobody is inside before opening; the two admitted users are back at the front.
+	for want, id := range map[int64]string{1: "1", 2: "2", 3: "3"} {
+		if v, _ := s.Status(ctx, e, id); v.Status != "waiting" || v.Position != want {
+			t.Fatalf("user %s: %+v", id, v)
+		}
+	}
+	clock.Add(time.Hour)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "1" || ids[1] != "2" {
+		t.Fatalf("admitted at opening %v %v", ids, err)
+	}
+	if st, _ := s.Stats(ctx, e); st.OrderViolations != 0 || st.Active != 2 || st.Waiting != 1 {
+		t.Fatalf("stats %+v", st)
+	}
+}
+
 func TestHeartbeatExpiryAndMaxStay(t *testing.T) {
 	c := DefaultConfig()
 	c.ActiveLimit = 2

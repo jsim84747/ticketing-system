@@ -203,6 +203,8 @@ func (v Settings) Validate() error {
 
 // UpdateSettings applies the given settings in one transaction. Lowering the
 // limit never evicts anyone; admission simply pauses until occupancy drops.
+// Scheduling an opening sends admitted users back to the front of the line,
+// so nobody is inside before the doors open.
 func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) error {
 	if !eventPattern.MatchString(event) {
 		return fmt.Errorf("invalid event")
@@ -237,6 +239,9 @@ func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) er
 		}
 		return nil
 	})
+	if err == nil && v.OpenAt != nil && *v.OpenAt > 0 {
+		_, err = s.run(ctx, event, "requeue", "")
+	}
 	return err
 }
 

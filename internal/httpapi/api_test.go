@@ -313,9 +313,10 @@ func TestAdminAPI(t *testing.T) {
 		t.Fatalf("admit should fill only the one free slot: %s", w.Body.String())
 	}
 	assertCode(call(h, "POST", settings, "admin-secret", `{"open_at":-5}`), 400)
+	// Scheduling an opening sends the two admitted users back to the line.
 	assertCode(call(h, "POST", settings, "admin-secret", `{"open_at":4102444800000}`), 204)
 	w = call(h, "GET", "/admin/api/events", "admin-secret", "")
-	for _, want := range []string{`"name":"Spring Concert"`, `"active_limit":2`, `"remaining":3`, `"mode":"manual"`, `"active":2`, `"waiting":1`, `"open_at":4102444800000`} {
+	for _, want := range []string{`"name":"Spring Concert"`, `"active_limit":2`, `"remaining":3`, `"mode":"manual"`, `"open_at":4102444800000`, `"active":0`, `"waiting":3`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("events missing %s: %s", want, w.Body.String())
 		}

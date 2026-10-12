@@ -103,6 +103,28 @@ if action == 'tick' or action == 'admit' then
   if #admitted == 0 then return '[]' end
   return cjson.encode(admitted)
 end
+-- Sends every admitted user back to the front of the line in their original
+-- order (their generation is their original queue score). Used when an opening
+-- is scheduled, so nobody is inside before the doors open.
+if action == 'requeue' then
+  local ids = redis.call('ZRANGE',active,0,-1)
+  local first
+  for _,id in ipairs(ids) do
+    local score = redis.call('HGET',generation,id)
+    redis.call('ZREM',active,id)
+    redis.call('ZREM',started,id)
+    redis.call('HDEL',generation,id)
+    if score then
+      redis.call('ZADD',waiting,score,id)
+      redis.call('HSET',joined,id,now)
+      if not first or tonumber(score) < first then first = tonumber(score) end
+    end
+  end
+  -- Re-admitting these older scores later is still FIFO, so lower the
+  -- order-violation watermark to just below them.
+  if first then redis.call('HSET',metrics,'last_score',string.format('%.0f',first-1)) end
+  return tostring(#ids)
+end
 if action == 'leave' then
   remove(user)
   redis.call('ZREM',waiting,user)

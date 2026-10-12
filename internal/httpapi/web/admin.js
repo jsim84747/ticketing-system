@@ -123,7 +123,7 @@ $('schedule-form').onsubmit = async e => {
   e.preventDefault();
   const openAt = new Date($('open-at').value).getTime();
   if (!(openAt > Date.now())) { flash('mode-message', 'Pick a time in the future.', false); return; }
-  try { await post('settings', {mode: 'manual', open_at: openAt}); flash('mode-message', 'Opening scheduled.'); refresh(); }
+  try { await post('settings', {mode: 'manual', open_at: openAt}); flash('mode-message', 'Opening scheduled. Anyone already admitted was moved back to the front of the line.'); refresh(); }
   catch (err) { flash('mode-message', `Couldn't schedule: ${err.message}`, false); }
 };
 $('cancel-schedule').onclick = async () => {
