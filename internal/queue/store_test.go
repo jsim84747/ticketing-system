@@ -301,6 +301,39 @@ func TestSchedulingSendsAdmittedUsersBackInOrder(t *testing.T) {
 	}
 }
 
+func TestDoorsStayClosedUntilOpening(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 1
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	s.Join(ctx, e, "early")
+	s.Join(ctx, e, "next")
+	if ids, _ := s.Tick(ctx, e); len(ids) != 1 {
+		t.Fatalf("auto admitted %v", ids)
+	}
+	// Schedule directly in Redis, skipping UpdateSettings, as if the admitted
+	// user had slipped in some other way. The next tick must still clear the room.
+	openAt := clock.Now().Add(time.Hour).UnixMilli()
+	s.Client.HSet(ctx, s.keys(e)[7], "mode", "manual", "open_at", openAt)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 0 {
+		t.Fatalf("tick while closed %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "early"); v.Status != "waiting" || v.Position != 1 {
+		t.Fatalf("early user should be back at #1: %+v", v)
+	}
+	// The admit button does nothing before opening.
+	if ids, err := s.Admit(ctx, e, 5); err != nil || len(ids) != 0 {
+		t.Fatalf("admit while closed %v %v", ids, err)
+	}
+	if st, _ := s.Stats(ctx, e); st.Active != 0 || st.Waiting != 2 {
+		t.Fatalf("room not empty before opening %+v", st)
+	}
+	clock.Add(time.Hour)
+	if ids, _ := s.Tick(ctx, e); len(ids) != 1 || ids[0] != "early" {
+		t.Fatalf("opening admitted %v", ids)
+	}
+}
+
 func TestHeartbeatExpiryAndMaxStay(t *testing.T) {
 	c := DefaultConfig()
 	c.ActiveLimit = 2

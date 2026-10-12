@@ -39,9 +39,11 @@ const localInput = date => new Date(date.getTime() - date.getTimezoneOffset() * 
 function renderSchedule(e) {
   const manual = e.mode === 'manual', scheduled = manual && e.open_at > 0;
   $('schedule').hidden = !manual; $('schedule-form').hidden = scheduled; $('scheduled').hidden = !scheduled;
+  // Doors stay closed until the opening, so manual admitting is unavailable meanwhile.
+  $('admit').hidden = !manual || scheduled;
   if (scheduled) {
     $('scheduled-time').textContent = new Date(e.open_at).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'}) + ` ${zoneShort(new Date(e.open_at))}`;
-    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())} (${zone}). People can line up now; nobody is let in early.`;
+    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())} (${zone}). People can line up now; nobody is let in until then, and anyone already inside is sent back to the front of the line.`;
   } else if (!$('open-at').value) {
     const next = new Date(Date.now() + 5 * 60000); next.setSeconds(0, 0);
     $('open-at').value = localInput(next);

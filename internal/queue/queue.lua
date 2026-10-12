@@ -85,28 +85,9 @@ local function admit(max)
 end
 -- tick is the worker's job: expire leases, then admit only in auto mode.
 -- admit is the admin's "let the next N in" button and works in either mode.
-if action == 'tick' or action == 'admit' then
-  cleanup()
-  if action == 'tick' and mode == 'manual' and openAt > 0 and now >= openAt then
-    mode = 'auto'
-    openAt = 0
-    redis.call('HSET',config,'mode','auto','open_at','0')
-  end
-  local admitted = {}
-  if action == 'admit' then
-    admitted = admit(math.min(tonumber(ARGV[7]),1000))
-  elseif mode == 'auto' then
-    admitted = admit(1000)
-  end
-  local peak = tonumber(redis.call('HGET',metrics,'peak_active') or '0')
-  redis.call('HSET',metrics,'peak_active',math.max(peak,redis.call('ZCARD',active)))
-  if #admitted == 0 then return '[]' end
-  return cjson.encode(admitted)
-end
 -- Sends every admitted user back to the front of the line in their original
--- order (their generation is their original queue score). Used when an opening
--- is scheduled, so nobody is inside before the doors open.
-if action == 'requeue' then
+-- order (their generation is their original queue score).
+local function requeue()
   local ids = redis.call('ZRANGE',active,0,-1)
   local first
   for _,id in ipairs(ids) do
@@ -123,7 +104,32 @@ if action == 'requeue' then
   -- Re-admitting these older scores later is still FIFO, so lower the
   -- order-violation watermark to just below them.
   if first then redis.call('HSET',metrics,'last_score',string.format('%.0f',first-1)) end
-  return tostring(#ids)
+  return #ids
+end
+if action == 'requeue' then return tostring(requeue()) end
+if action == 'tick' or action == 'admit' then
+  cleanup()
+  if action == 'tick' and mode == 'manual' and openAt > 0 and now >= openAt then
+    mode = 'auto'
+    openAt = 0
+    redis.call('HSET',config,'mode','auto','open_at','0')
+  end
+  -- While an opening is scheduled the doors are closed: nobody may be inside,
+  -- however they got there, and the admit button does nothing.
+  local closed = mode == 'manual' and openAt > now
+  if closed then requeue() end
+  local admitted = {}
+  if closed then
+    admitted = {}
+  elseif action == 'admit' then
+    admitted = admit(math.min(tonumber(ARGV[7]),1000))
+  elseif mode == 'auto' then
+    admitted = admit(1000)
+  end
+  local peak = tonumber(redis.call('HGET',metrics,'peak_active') or '0')
+  redis.call('HSET',metrics,'peak_active',math.max(peak,redis.call('ZCARD',active)))
+  if #admitted == 0 then return '[]' end
+  return cjson.encode(admitted)
 end
 if action == 'leave' then
   remove(user)
