@@ -216,6 +216,60 @@ func TestManualModeAndSettings(t *testing.T) {
 	}
 }
 
+func TestScheduledOpening(t *testing.T) {
+	c := DefaultConfig()
+	c.ActiveLimit = 2
+	s, e, clock := setup(t, c)
+	ctx := context.Background()
+	manual := "manual"
+	openAt := clock.Now().Add(time.Minute).UnixMilli()
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &openAt}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		s.Join(ctx, e, fmt.Sprint(i))
+	}
+	// Before opening, users only line up.
+	clock.Add(59 * time.Second)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 0 {
+		t.Fatalf("admitted before opening: %v %v", ids, err)
+	}
+	if v, _ := s.Status(ctx, e, "1"); v.Status != "waiting" || v.OpenAt != openAt || v.Mode != "manual" {
+		t.Fatalf("waiting status %+v", v)
+	}
+	// At the opening time, admission starts in FIFO order and the event switches to auto.
+	clock.Add(time.Second)
+	if ids, err := s.Tick(ctx, e); err != nil || len(ids) != 2 || ids[0] != "1" || ids[1] != "2" {
+		t.Fatalf("admitted at opening: %v %v", ids, err)
+	}
+	if st, _ := s.Stats(ctx, e); st.Mode != "auto" || st.OpenAt != 0 {
+		t.Fatalf("after opening %+v", st)
+	}
+	// Setting open_at to 0 cancels the schedule, so manual mode stays closed.
+	cancel := int64(0)
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &manual, OpenAt: &cancel}); err != nil {
+		t.Fatal(err)
+	}
+	s.Leave(ctx, e, "1")
+	clock.Add(time.Hour)
+	if ids, _ := s.Tick(ctx, e); len(ids) != 0 {
+		t.Fatalf("cancelled schedule still admitted %v", ids)
+	}
+	auto := "auto"
+	later := clock.Now().Add(time.Hour).UnixMilli()
+	s.UpdateSettings(ctx, e, Settings{OpenAt: &later})
+	if err := s.UpdateSettings(ctx, e, Settings{Mode: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := s.Stats(ctx, e); st.OpenAt != 0 {
+		t.Fatalf("switching to auto kept the schedule: %+v", st)
+	}
+	negative := int64(-1)
+	if err := s.UpdateSettings(ctx, e, Settings{OpenAt: &negative}); err == nil {
+		t.Fatal("negative opening time accepted")
+	}
+}
+
 func TestHeartbeatExpiryAndMaxStay(t *testing.T) {
 	c := DefaultConfig()
 	c.ActiveLimit = 2

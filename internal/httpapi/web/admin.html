@@ -53,6 +53,16 @@
 <button type="button" id="mode-manual" role="radio" aria-checked="false">Manual</button>
 </div>
 <p id="mode-help" class="help">The next person in line is let in automatically whenever a spot opens.</p>
+<div id="schedule" hidden>
+<form id="schedule-form">
+<label>Open the doors at<input id="open-at" type="datetime-local" required></label>
+<button class="primary" type="submit">Schedule opening <span>→</span></button>
+</form>
+<div id="scheduled" class="scheduled" hidden>
+<span>Opens at</span><strong id="scheduled-time">—</strong><small id="scheduled-left"></small>
+<button type="button" id="cancel-schedule" class="secondary">Cancel schedule</button>
+</div>
+</div>
 <form id="admit" hidden>
 <label>Let in the next<input id="admit-count" type="number" min="1" max="1000" value="1" required></label>
 <button class="primary" type="submit">Admit <span>→</span></button>

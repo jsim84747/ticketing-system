@@ -17,13 +17,16 @@ local timeout = tonumber(redis.call('HGET',config,'timeout'))
 local maxstay = tonumber(redis.call('HGET',config,'maxstay'))
 local mode = redis.call('HGET',config,'mode')
 local name = redis.call('HGET',config,'name') or ''
+-- Scheduled opening (unix ms, 0 = none): in manual mode users can line up early
+-- and the first tick at or after open_at switches the event to auto admission.
+local openAt = tonumber(redis.call('HGET',config,'open_at') or '0')
 if action == 'stats' then
   local function metric(key) return tonumber(redis.call('HGET',metrics,key) or '0') end
   return cjson.encode({active=redis.call('ZCARD',active),waiting=redis.call('ZCARD',waiting),
     admissions=metric('admissions'),peak_active=metric('peak_active'),order_violations=metric('order_violations'),
     wait_total_ms=metric('wait_total_ms'),wait_max_ms=metric('wait_max_ms'),
     remaining=tonumber(redis.call('GET',stock) or '0'),reserved=redis.call('HLEN',reservations),
-    active_limit=limit,mode=mode,name=name})
+    active_limit=limit,mode=mode,name=name,open_at=openAt})
 end
 local function remove(id)
   local since = redis.call('ZSCORE',started,id)
@@ -84,6 +87,11 @@ end
 -- admit is the admin's "let the next N in" button and works in either mode.
 if action == 'tick' or action == 'admit' then
   cleanup()
+  if action == 'tick' and mode == 'manual' and openAt > 0 and now >= openAt then
+    mode = 'auto'
+    openAt = 0
+    redis.call('HSET',config,'mode','auto','open_at','0')
+  end
   local admitted = {}
   if action == 'admit' then
     admitted = admit(math.min(tonumber(ARGV[7]),1000))
@@ -118,7 +126,7 @@ if action == 'reserve' then
   remove(user)
   return result
 end
-local function encode(v) v.name = name; v.mode = mode; return cjson.encode(v) end
+local function encode(v) v.name = name; v.mode = mode; v.open_at = openAt; return cjson.encode(v) end
 local function status()
   local reservation = redis.call('HGET',reservations,user)
   if reservation then

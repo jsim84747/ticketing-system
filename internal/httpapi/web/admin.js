@@ -25,13 +25,30 @@ function fillSettings(e, force) {
   shownEvent = e.id;
   $('set-name').value = e.name; $('set-limit').value = e.active_limit; $('set-remaining').value = e.remaining;
 }
+const countdown = ms => {
+  const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return h ? `${h}h ${m}m ${r}s` : m ? `${m}m ${r}s` : `${r}s`;
+};
+// datetime-local wants local time without a zone, e.g. 2026-10-12T20:00.
+const localInput = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+function renderSchedule(e) {
+  const manual = e.mode === 'manual', scheduled = manual && e.open_at > 0;
+  $('schedule').hidden = !manual; $('schedule-form').hidden = scheduled; $('scheduled').hidden = !scheduled;
+  if (scheduled) {
+    $('scheduled-time').textContent = new Date(e.open_at).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'});
+    $('scheduled-left').textContent = `in ${countdown(e.open_at - Date.now())}. People can line up now; nobody is let in early.`;
+  } else if (!$('open-at').value) {
+    const next = new Date(Date.now() + 5 * 60000); next.setSeconds(0, 0);
+    $('open-at').value = localInput(next);
+  }
+}
 function renderMode(mode) {
   const manual = mode === 'manual';
   $('mode-auto').setAttribute('aria-checked', String(!manual)); $('mode-manual').setAttribute('aria-checked', String(manual));
   $('mode-badge').textContent = manual ? 'MANUAL' : 'AUTO'; $('mode-badge').classList.toggle('manual', manual);
   $('admit').hidden = !manual;
   $('mode-help').textContent = manual
-    ? 'Nobody is let in automatically. Use the button below to admit people from the front of the line.'
+    ? 'Nobody is let in automatically. Schedule an opening time, or admit people from the front of the line with the button below.'
     : 'The next person in line is let in automatically whenever a spot opens.';
 }
 function renderEvents(list) {
@@ -54,7 +71,7 @@ function renderEvents(list) {
   $('wait-max').textContent = e.admissions ? ms(e.wait_max_ms) : '—';
   const q = encodeURIComponent(e.id);
   $('user-page').href = `/?event=${q}`; $('test-page').href = `/?event=${q}&debug=1`;
-  fillSettings(e, false); renderMode(e.mode);
+  fillSettings(e, false); renderMode(e.mode); renderSchedule(e);
 }
 function renderUsers(v) {
   $('users-count').textContent = v.total > v.users.length ? `showing ${v.users.length} of ${num(v.total)}` : num(v.total);
@@ -97,6 +114,17 @@ async function setMode(mode) {
 }
 $('mode-auto').onclick = () => setMode('auto');
 $('mode-manual').onclick = () => setMode('manual');
+$('schedule-form').onsubmit = async e => {
+  e.preventDefault();
+  const openAt = new Date($('open-at').value).getTime();
+  if (!(openAt > Date.now())) { flash('mode-message', 'Pick a time in the future.', false); return; }
+  try { await post('settings', {mode: 'manual', open_at: openAt}); flash('mode-message', 'Opening scheduled.'); refresh(); }
+  catch (err) { flash('mode-message', `Couldn't schedule: ${err.message}`, false); }
+};
+$('cancel-schedule').onclick = async () => {
+  try { await post('settings', {open_at: 0}); flash('mode-message', 'Schedule cancelled. Still in manual mode.'); refresh(); }
+  catch (err) { flash('mode-message', `Couldn't cancel: ${err.message}`, false); }
+};
 $('admit').onsubmit = async e => {
   e.preventDefault();
   try {

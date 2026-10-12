@@ -40,6 +40,7 @@ type Status struct {
 	Token                string `json:"token,omitempty"`
 	Name                 string `json:"name"`
 	Mode                 string `json:"mode"`
+	OpenAt               int64  `json:"open_at"`
 }
 type Store struct {
 	Client *redis.Client
@@ -179,6 +180,9 @@ type Settings struct {
 	Name        *string `json:"name"`
 	Remaining   *int    `json:"remaining"`
 	Mode        *string `json:"mode"`
+	// OpenAt schedules manual mode to switch to auto admission at this
+	// unix time in milliseconds; 0 cancels the schedule.
+	OpenAt *int64 `json:"open_at"`
 }
 
 func (v Settings) Validate() error {
@@ -191,6 +195,8 @@ func (v Settings) Validate() error {
 		return fmt.Errorf("remaining tickets must be between 0 and 10000000")
 	case v.Mode != nil && *v.Mode != "auto" && *v.Mode != "manual":
 		return fmt.Errorf(`mode must be "auto" or "manual"`)
+	case v.OpenAt != nil && *v.OpenAt < 0:
+		return fmt.Errorf("opening time must not be negative")
 	}
 	return nil
 }
@@ -222,6 +228,13 @@ func (s *Store) UpdateSettings(ctx context.Context, event string, v Settings) er
 		if v.Remaining != nil {
 			p.Set(ctx, k[9], *v.Remaining, 0)
 		}
+		if v.OpenAt != nil {
+			p.HSet(ctx, k[7], "open_at", *v.OpenAt)
+		} else if v.Mode != nil && *v.Mode == "auto" {
+			// Switching to auto by hand drops any pending schedule, so it
+			// cannot fire unexpectedly after a later switch back to manual.
+			p.HSet(ctx, k[7], "open_at", 0)
+		}
 		return nil
 	})
 	return err
@@ -242,6 +255,7 @@ type Stats struct {
 	ActiveLimit     int64  `json:"active_limit"`
 	Mode            string `json:"mode"`
 	Name            string `json:"name"`
+	OpenAt          int64  `json:"open_at"`
 }
 
 func (s *Store) Stats(ctx context.Context, event string) (Stats, error) {

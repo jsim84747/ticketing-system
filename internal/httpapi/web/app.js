@@ -11,7 +11,7 @@ $('event-id').textContent = eventID;
 $('new-tab').href = `/?event=${encodeURIComponent(eventID)}&debug=1`;
 let session = sessionStorage.getItem('session'), state = 'absent', admission = '', busy = false;
 let initial = Number(sessionStorage.getItem(`initial:${eventID}`)) || 0;
-let pollTimer, beatTimer, revision = 0;
+let pollTimer, beatTimer, revision = 0, openAt = 0, mode = 'auto';
 async function api(path, method = 'GET', extra = {}) {
   const response = await fetch(path, {method, headers: {...(session ? {Authorization: `Bearer ${session}`} : {}), ...extra}, signal: AbortSignal.timeout(7000)});
   const data = response.status === 204 ? {} : await response.json();
@@ -21,8 +21,17 @@ async function api(path, method = 'GET', extra = {}) {
   }
   return data;
 }
+function countdown(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
+}
+const opensSoon = () => mode === 'manual' && openAt > 0;
+const doors = () => new Date(openAt).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+// Ticks every second between polls so the countdown moves smoothly.
+setInterval(() => { if (state === 'waiting' && opensSoon()) $('eta').textContent = openAt > Date.now() ? `Opens in ${countdown(openAt - Date.now())}` : 'Opening now'; }, 1000);
 function render(v) {
   state = v.status; admission = v.token || '';
+  if (v.mode) { mode = v.mode; openAt = v.open_at || 0; }
   $('connection').textContent = 'Live';
   if (v.name) document.querySelectorAll('.ticket-name').forEach(el => { el.textContent = v.name; });
   $('waiting-view').hidden = state === 'admitted' || state === 'completed';
@@ -33,8 +42,8 @@ function render(v) {
     const progress = Math.max(0, Math.min(99, (1 - v.position / initial) * 100));
     $('position').textContent = `#${v.position.toLocaleString('en-US')}`; $('caption').textContent = 'Your place in line';
     $('ahead').textContent = v.ahead.toLocaleString('en-US');
-    $('eta').textContent = v.mode === 'manual' ? 'Set by organizer' : v.estimated_wait_seconds == null ? 'Calculating' : v.estimated_wait_seconds < 60 ? `About ${v.estimated_wait_seconds} sec` : `About ${Math.ceil(v.estimated_wait_seconds / 60)} min`;
-    $('detail').textContent = v.mode === 'manual' ? 'The organizer is letting people in. Your place is saved, even if you refresh.' : 'Your place is saved, even if you refresh.';
+    $('eta').textContent = opensSoon() ? (openAt > Date.now() ? `Opens in ${countdown(openAt - Date.now())}` : 'Opening now') : v.mode === 'manual' ? 'Set by organizer' : v.estimated_wait_seconds == null ? 'Calculating' : v.estimated_wait_seconds < 60 ? `About ${v.estimated_wait_seconds} sec` : `About ${Math.ceil(v.estimated_wait_seconds / 60)} min`;
+    $('detail').textContent = opensSoon() ? `Doors open at ${doors()}. Stay on this page and you'll be let in in order.` : v.mode === 'manual' ? 'The organizer is letting people in. Your place is saved, even if you refresh.' : 'Your place is saved, even if you refresh.';
     $('progress').value = progress; $('progress-text').textContent = `${Math.floor(progress)}%`;
   } else if (state === 'admitted') {
     $('expires').textContent = new Date(v.expires_at).toLocaleTimeString('en-US');
@@ -44,7 +53,7 @@ function render(v) {
   } else {
     initial = 0; sessionStorage.removeItem(`initial:${eventID}`); $('position').textContent = '—'; $('ahead').textContent = '—'; $('eta').textContent = 'Calculating'; $('progress').value = 0; $('progress-text').textContent = '0%';
     $('caption').textContent = state === 'expired' ? 'Your spot expired' : 'Not in line yet';
-    $('detail').textContent = 'Click the button below to join the line.';
+    $('detail').textContent = opensSoon() ? `The line is open. Doors open at ${doors()}; join now to get your place.` : 'Click the button below to join the line.';
   }
 }
 async function poll() {
